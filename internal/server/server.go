@@ -2,6 +2,8 @@ package server
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -11,14 +13,24 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
 )
 
-// Global HTTP client instance
-var httpClient HTTPClient
+// Server represents the proxy server with its dependencies
+type Server struct {
+	httpClient HTTPClient
+	provider   credentials.CredentialsProvider
+	oauthCreds *credentials.OAuthCredentials
+	projectID  string
+}
 
-// InitHTTPClient initializes the global HTTP client
-func InitHTTPClient() {
-	httpClient = NewHTTPClient()
+// NewServer creates a new server instance with the given credentials provider
+func NewServer(provider credentials.CredentialsProvider) *Server {
+	return &Server{
+		httpClient: NewHTTPClient(),
+		provider:   provider,
+	}
 }
 
 // sseMessage represents a single SSE message to be processed
@@ -124,8 +136,8 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 	}
 }
 
-// HandleProxyRequest is the main handler for all incoming proxy requests.
-func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
+// HandleProxyRequest handles incoming proxy requests for the server instance
+func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Incoming request: %s %s%s", r.Method, r.URL.Path, func() string {
 		if r.URL.RawQuery != "" {
 			return "?" + r.URL.RawQuery
@@ -141,7 +153,7 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body.Close()
 
-	proxyReq, err := TransformRequest(r, body)
+	proxyReq, err := s.TransformRequest(r, body)
 	if err != nil {
 		http.Error(w, "Error transforming request: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -151,7 +163,7 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	log.Printf("Sending request to CloudCode at %s", startTime.Format("15:04:05.000"))
 
-	resp, err := httpClient.Do(proxyReq)
+	resp, err := s.httpClient.Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Error forwarding request: "+err.Error(), http.StatusBadGateway)
 		return
@@ -162,20 +174,28 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		log.Println("Received 401 Unauthorized, attempting to refresh token...")
 		resp.Body.Close() // Close the first response body
 
-		if err := refreshAccessToken(); err != nil {
+		if err := s.provider.RefreshToken(); err != nil {
 			http.Error(w, "Failed to refresh token: "+err.Error(), http.StatusUnauthorized)
 			return
 		}
 
+		// Reload credentials after refresh
+		creds, err := s.provider.GetCredentials()
+		if err != nil {
+			http.Error(w, "Failed to reload credentials after refresh: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.oauthCreds = creds
+
 		// Re-create the request with the new token using the saved body
-		newProxyReq, err := TransformRequest(r, body)
+		newProxyReq, err := s.TransformRequest(r, body)
 		if err != nil {
 			http.Error(w, "Error re-transforming request after refresh: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		log.Println("Retrying request with new token...")
-		resp, err = httpClient.Do(newProxyReq)
+		resp, err = s.httpClient.Do(newProxyReq)
 		if err != nil {
 			http.Error(w, "Error forwarding request after refresh: "+err.Error(), http.StatusBadGateway)
 			return
@@ -252,20 +272,171 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Start launches the proxy server.
-func Start(addr string) {
-	// Initialize HTTP client
-	InitHTTPClient()
-
+// Start launches the proxy server with the configured provider
+func (s *Server) Start(addr string) error {
 	// Load OAuth credentials on startup
-	if err := LoadOAuthCredentials(); err != nil {
+	if err := s.LoadCredentials(); err != nil {
 		log.Printf("Failed to load OAuth credentials: %v", err)
 		log.Println("The proxy will run but authentication will fail without valid credentials")
 	}
 
-	http.HandleFunc("/", HandleProxyRequest)
+	http.HandleFunc("/", s.HandleProxyRequest)
 	log.Printf("Starting proxy server on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatal(err)
+	return http.ListenAndServe(addr, nil)
+}
+
+// LoadCredentials loads OAuth credentials using the configured provider
+func (s *Server) LoadCredentials() error {
+	creds, err := s.provider.GetCredentials()
+	if err != nil {
+		return err
 	}
+
+	s.oauthCreds = creds
+
+	// Check if token is expired (with a 5-minute buffer)
+	if creds.ExpiryDate > 0 {
+		expiryTime := time.Unix(creds.ExpiryDate/1000, 0)
+		if time.Now().After(expiryTime.Add(-5 * time.Minute)) {
+			log.Println("OAuth token is expired or expiring soon, attempting to refresh...")
+			if err := s.provider.RefreshToken(); err != nil {
+				log.Printf("Failed to refresh OAuth token: %v", err)
+				// Continue with the expired token, the API call might still work or will fail with 401
+			} else {
+				// Reload credentials after refresh
+				creds, err = s.provider.GetCredentials()
+				if err != nil {
+					return err
+				}
+				s.oauthCreds = creds
+			}
+		} else {
+			timeUntilExpiry := time.Until(expiryTime)
+			log.Printf("OAuth token valid for %v", timeUntilExpiry.Round(time.Second))
+		}
+	}
+
+	log.Printf("Loaded OAuth credentials from %s", s.provider.Name())
+	return nil
+}
+
+// DiscoverProjectID automatically discovers the GCP project ID using the Code Assist API.
+func (s *Server) DiscoverProjectID() (string, error) {
+	if s.projectID != "" {
+		return s.projectID, nil
+	}
+
+	if s.oauthCreds == nil {
+		return "", fmt.Errorf("OAuth credentials not loaded")
+	}
+
+	initialProjectID := "default"
+	clientMetadata := map[string]interface{}{
+		"ideType":     "IDE_UNSPECIFIED",
+		"platform":    "PLATFORM_UNSPECIFIED",
+		"pluginType":  "GEMINI",
+		"duetProject": initialProjectID,
+	}
+
+	loadRequest := map[string]interface{}{
+		"cloudaicompanionProject": initialProjectID,
+		"metadata":                clientMetadata,
+	}
+
+	loadResponse, err := s.callEndpoint("loadCodeAssist", loadRequest)
+	if err != nil {
+		return "", fmt.Errorf("failed to call loadCodeAssist: %w", err)
+	}
+
+	if companionProject, ok := loadResponse["cloudaicompanionProject"].(string); ok && companionProject != "" {
+		s.projectID = companionProject
+		log.Printf("Discovered project ID: %s", s.projectID)
+		return s.projectID, nil
+	}
+
+	// Onboarding flow
+	var tierID string
+	if allowedTiers, ok := loadResponse["allowedTiers"].([]interface{}); ok {
+		for _, tier := range allowedTiers {
+			if tierMap, ok := tier.(map[string]interface{}); ok {
+				if isDefault, ok := tierMap["isDefault"].(bool); ok && isDefault {
+					tierID = tierMap["id"].(string)
+					break
+				}
+			}
+		}
+	}
+	if tierID == "" {
+		tierID = "free-tier"
+	}
+
+	onboardRequest := map[string]interface{}{
+		"tierId":                  tierID,
+		"cloudaicompanionProject": initialProjectID,
+		"metadata":                clientMetadata,
+	}
+
+	lroResponse, err := s.callEndpoint("onboardUser", onboardRequest)
+	if err != nil {
+		return "", fmt.Errorf("failed to call onboardUser: %w", err)
+	}
+
+	// Polling for completion
+	for {
+		if done, ok := lroResponse["done"].(bool); ok && done {
+			if response, ok := lroResponse["response"].(map[string]interface{}); ok {
+				if companionProject, ok := response["cloudaicompanionProject"].(map[string]interface{}); ok {
+					if id, ok := companionProject["id"].(string); ok && id != "" {
+						s.projectID = id
+						log.Printf("Discovered project ID after onboarding: %s", s.projectID)
+						return s.projectID, nil
+					}
+				}
+			}
+			return "", fmt.Errorf("onboarding completed but no project ID found")
+		}
+
+		time.Sleep(2 * time.Second)
+		lroResponse, err = s.callEndpoint("onboardUser", onboardRequest)
+		if err != nil {
+			return "", fmt.Errorf("failed to poll onboardUser: %w", err)
+		}
+	}
+}
+
+func (s *Server) callEndpoint(method string, body interface{}) (map[string]interface{}, error) {
+	reqBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/%s:%s", credentials.CodeAssistEndpoint, credentials.CodeAssistAPIVersion, method), bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+s.oauthCreds.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API call failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }

@@ -124,8 +124,8 @@ func unwrapCloudCodeResponse(cloudCodeResp map[string]interface{}) map[string]in
 	return geminiResp
 }
 
-// TransformRequest rewrites the incoming standard Gemini request to the Cloud Code format.
-func TransformRequest(r *http.Request, body []byte) (*http.Request, error) {
+// TransformRequest rewrites the incoming standard Gemini request to the Cloud Code format (server method).
+func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, error) {
 	log.Println("--- Start Request Transformation ---")
 	defer log.Println("--- End Request Transformation ---")
 
@@ -170,7 +170,7 @@ func TransformRequest(r *http.Request, body []byte) (*http.Request, error) {
 	projectID := os.Getenv("CLOUDCODE_GCP_PROJECT_ID")
 	if projectID == "" {
 		var err error
-		projectID, err = DiscoverProjectID()
+		projectID, err = s.DiscoverProjectID()
 		if err != nil {
 			log.Printf("Error discovering project ID: %v", err)
 			return nil, err
@@ -248,8 +248,8 @@ func TransformRequest(r *http.Request, body []byte) (*http.Request, error) {
 		proxyReq.Header.Set("Authorization", clientAuthHeader)
 	} else {
 		// No client authorization provided, use OAuth credentials
-		if oauthCreds != nil && oauthCreds.AccessToken != "" {
-			proxyReq.Header.Set("Authorization", "Bearer "+oauthCreds.AccessToken)
+		if s.oauthCreds != nil && s.oauthCreds.AccessToken != "" {
+			proxyReq.Header.Set("Authorization", "Bearer "+s.oauthCreds.AccessToken)
 		} else {
 			log.Printf("Warning: No OAuth credentials loaded and no client authorization provided")
 		}

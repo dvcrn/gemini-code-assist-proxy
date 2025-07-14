@@ -6,7 +6,7 @@ compatibility_flags = [
     "streams_enable_constructors"
 ]
 kv_namespaces = [
-  { binding = "GEMINI_CLI_KV", id = "" }
+  { binding = "GEMINI_CLI_KV", id = "1b50755325d24c4ba99d074884f74908" }
 ]
 
 [build]

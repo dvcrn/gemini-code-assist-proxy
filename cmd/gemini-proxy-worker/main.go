@@ -6,16 +6,26 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
 	"github.com/dvcrn/gemini-cli-proxy/internal/server"
 	"github.com/syumai/workers"
 )
 
+var srv *server.Server
+
 func init() {
-	// Initialize HTTP client - this will be called before main
-	server.InitHTTPClient()
+	// Create file provider
+	provider, err := credentials.NewFileProvider()
+	if err != nil {
+		log.Printf("Failed to create credentials provider: %v", err)
+		// Continue anyway, authentication will fail
+	}
+
+	// Create server with provider
+	srv = server.NewServer(provider)
 
 	// Load OAuth credentials on startup
-	if err := server.LoadOAuthCredentials(); err != nil {
+	if err := srv.LoadCredentials(); err != nil {
 		log.Printf("Failed to load OAuth credentials: %v", err)
 		log.Println("The proxy will run but authentication will fail without valid credentials")
 	}
@@ -23,5 +33,5 @@ func init() {
 
 func main() {
 	// Serve using workers - it handles all the HTTP server setup
-	workers.Serve(http.HandlerFunc(server.HandleProxyRequest))
+	workers.Serve(http.HandlerFunc(srv.HandleProxyRequest))
 }
