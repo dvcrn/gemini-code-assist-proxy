@@ -3,6 +3,7 @@
 package credentials
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -12,13 +13,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/syumai/workers/cloudflare/fetch"
 	"github.com/syumai/workers/cloudflare/kv"
 )
 
 // CloudflareKVProvider implements CredentialsProvider using Cloudflare KV storage
 type CloudflareKVProvider struct {
 	kvStore    *kv.Namespace
-	httpClient *http.Client
+	httpClient *fetch.Client
 }
 
 // NewCloudflareKVProvider creates a new Cloudflare KV-based credentials provider
@@ -31,10 +33,8 @@ func NewCloudflareKVProvider() (*CloudflareKVProvider, error) {
 	}
 
 	return &CloudflareKVProvider{
-		kvStore: kvStore,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		kvStore:    kvStore,
+		httpClient: fetch.NewClient(),
 	}, nil
 }
 
@@ -94,14 +94,15 @@ func (c *CloudflareKVProvider) RefreshToken() error {
 	form.Add("refresh_token", creds.RefreshToken)
 	form.Add("grant_type", "refresh_token")
 
-	req, err := http.NewRequest("POST", "https://oauth2.googleapis.com/token", strings.NewReader(form.Encode()))
+	// Create fetch request for Workers
+	fetchReq, err := fetch.NewRequest(context.Background(), "POST", "https://oauth2.googleapis.com/token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
-	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	fetchReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// Execute refresh request
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(fetchReq, nil)
 	if err != nil {
 		return err
 	}

@@ -23,14 +23,18 @@ type Server struct {
 	provider   credentials.CredentialsProvider
 	oauthCreds *credentials.OAuthCredentials
 	projectID  string
+	mux        *http.ServeMux
 }
 
 // NewServer creates a new server instance with the given credentials provider
 func NewServer(provider credentials.CredentialsProvider) *Server {
-	return &Server{
+	s := &Server{
 		httpClient: NewHTTPClient(),
 		provider:   provider,
+		mux:        http.NewServeMux(),
 	}
+	s.setupRoutes()
+	return s
 }
 
 // sseMessage represents a single SSE message to be processed
@@ -280,9 +284,8 @@ func (s *Server) Start(addr string) error {
 		log.Println("The proxy will run but authentication will fail without valid credentials")
 	}
 
-	http.HandleFunc("/", s.HandleProxyRequest)
 	log.Printf("Starting proxy server on %s", addr)
-	return http.ListenAndServe(addr, nil)
+	return http.ListenAndServe(addr, s.mux)
 }
 
 // LoadCredentials loads OAuth credentials using the configured provider
@@ -439,4 +442,89 @@ func (s *Server) callEndpoint(method string, body interface{}) (map[string]inter
 	}
 
 	return result, nil
+}
+
+// setupRoutes configures all HTTP routes
+func (s *Server) setupRoutes() {
+	s.mux.HandleFunc("/admin/credentials", s.adminMiddleware(s.credentialsHandler))
+	s.mux.HandleFunc("/admin/credentials/status", s.adminMiddleware(s.credentialsStatusHandler))
+	s.mux.HandleFunc("/", s.HandleProxyRequest)
+}
+
+// ServeHTTP implements http.Handler interface
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mux.ServeHTTP(w, r)
+}
+
+// credentialsHandler handles POST /admin/credentials for setting OAuth credentials
+func (s *Server) credentialsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse request body - using the exact same format as oauth_creds.json
+	var creds credentials.OAuthCredentials
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		log.Printf("Failed to decode credentials request: %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Save credentials
+	if err := s.provider.SaveCredentials(&creds); err != nil {
+		log.Printf("Failed to save credentials: %v", err)
+		http.Error(w, "Failed to save credentials", http.StatusInternalServerError)
+		return
+	}
+
+	// Update server's cached credentials
+	s.oauthCreds = &creds
+
+	// Return success response
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Credentials saved successfully",
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// credentialsStatusHandler handles GET /admin/credentials/status
+func (s *Server) credentialsStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Try to get current credentials
+	creds, err := s.provider.GetCredentials()
+
+	response := map[string]interface{}{
+		"type":           "oauth",
+		"hasCredentials": err == nil && creds != nil,
+		"provider":       s.provider.Name(),
+	}
+
+	if err == nil && creds != nil {
+		// Check expiry
+		isExpired := false
+		var expiresAt time.Time
+		if creds.ExpiryDate > 0 {
+			expiresAt = time.Unix(creds.ExpiryDate/1000, 0)
+			isExpired = time.Now().After(expiresAt)
+		}
+
+		response["is_expired"] = isExpired
+		if creds.ExpiryDate > 0 {
+			response["expiry_date"] = creds.ExpiryDate
+			response["expiry_date_formatted"] = expiresAt.Format(time.RFC3339)
+		}
+		response["has_refresh_token"] = creds.RefreshToken != ""
+	} else if err != nil {
+		response["error"] = err.Error()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

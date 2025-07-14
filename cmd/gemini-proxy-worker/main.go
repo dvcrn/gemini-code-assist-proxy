@@ -4,7 +4,6 @@ package main
 
 import (
 	"log"
-	"net/http"
 
 	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
 	"github.com/dvcrn/gemini-cli-proxy/internal/server"
@@ -33,5 +32,5 @@ func init() {
 
 func main() {
 	// Serve using workers - it handles all the HTTP server setup
-	workers.Serve(http.HandlerFunc(srv.HandleProxyRequest))
+	workers.Serve(srv)
 }
