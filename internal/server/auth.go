@@ -20,6 +20,8 @@ type OAuthCredentials struct {
 	RefreshToken string `json:"refresh_token"`
 	ExpiryDate   int64  `json:"expiry_date"`
 	TokenType    string `json:"token_type"`
+	Scope        string `json:"scope,omitempty"`
+	IDToken      string `json:"id_token,omitempty"`
 }
 
 // TokenRefreshResponse represents the response from the token refresh endpoint
@@ -30,9 +32,11 @@ type TokenRefreshResponse struct {
 	TokenType   string `json:"token_type"`
 }
 
-var oauthCreds *OAuthCredentials
-var oauthCredsPath string // Store the path to the credentials file
-var projectID string
+var (
+	oauthCreds     *OAuthCredentials
+	oauthCredsPath string // Store the path to the credentials file
+	projectID      string
+)
 
 const (
 	codeAssistEndpoint   = "https://cloudcode-pa.googleapis.com"
@@ -170,6 +174,14 @@ func refreshAccessToken() error {
 	// Update credentials
 	oauthCreds.AccessToken = refreshResp.AccessToken
 	oauthCreds.ExpiryDate = time.Now().Add(time.Duration(refreshResp.ExpiresIn)*time.Second).Unix() * 1000
+	oauthCreds.TokenType = refreshResp.TokenType
+
+	// Update scope if provided in refresh response
+	if refreshResp.Scope != "" {
+		oauthCreds.Scope = refreshResp.Scope
+	}
+
+	// Note: ID token is preserved from original credentials (refresh doesn't return a new one)
 	log.Println("Successfully refreshed OAuth token.")
 
 	// Save the updated credentials back to the file
@@ -179,7 +191,7 @@ func refreshAccessToken() error {
 			log.Printf("Warning: failed to marshal updated credentials: %v", err)
 			return nil
 		}
-		if err := ioutil.WriteFile(oauthCredsPath, updatedCredsJSON, 0644); err != nil {
+		if err := ioutil.WriteFile(oauthCredsPath, updatedCredsJSON, 0o644); err != nil {
 			log.Printf("Warning: failed to write updated credentials to %s: %v", oauthCredsPath, err)
 		} else {
 			log.Printf("Saved refreshed credentials to %s", oauthCredsPath)
