@@ -7,8 +7,10 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -20,7 +22,16 @@ type OAuthCredentials struct {
 	TokenType    string `json:"token_type"`
 }
 
+// TokenRefreshResponse represents the response from the token refresh endpoint
+type TokenRefreshResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	Scope       string `json:"scope"`
+	TokenType   string `json:"token_type"`
+}
+
 var oauthCreds *OAuthCredentials
+var oauthCredsPath string // Store the path to the credentials file
 var projectID string
 
 const (
@@ -79,6 +90,8 @@ func loadCredsFromFile(path string) error {
 	if err != nil {
 		return err
 	}
+	// Store the path for later use (saving refreshed tokens)
+	oauthCredsPath = path
 	return parseAndSetCreds(data)
 }
 
@@ -90,21 +103,86 @@ func loadCredsFromJSON(jsonStr string) error {
 // parseAndSetCreds parses JSON data, sets the global credentials, and checks for expiry.
 func parseAndSetCreds(data []byte) error {
 	creds := &OAuthCredentials{}
-	if err := json.Unmarshal(data, creds); err != nil {
+	if err := json.Unmarshal(data, &creds); err != nil {
 		return err
 	}
 
 	oauthCreds = creds
 
-	// Check if token is expired
+	// Check if token is expired (with a 5-minute buffer)
 	if creds.ExpiryDate > 0 {
 		expiryTime := time.Unix(creds.ExpiryDate/1000, 0)
-		if time.Now().After(expiryTime) {
-			log.Printf("WARNING: OAuth token has expired (expired at %v)", expiryTime)
-			log.Println("Please refresh your OAuth credentials.")
+		if time.Now().After(expiryTime.Add(-5 * time.Minute)) {
+			log.Println("OAuth token is expired or expiring soon, attempting to refresh...")
+			if err := refreshAccessToken(); err != nil {
+				log.Printf("Failed to refresh OAuth token: %v", err)
+				// Continue with the expired token, the API call might still work or will fail with 401
+			}
 		} else {
 			timeUntilExpiry := time.Until(expiryTime)
 			log.Printf("OAuth token valid for %v", timeUntilExpiry.Round(time.Second))
+		}
+	}
+
+	return nil
+}
+
+// refreshAccessToken uses the refresh token to get a new access token
+func refreshAccessToken() error {
+	if oauthCreds == nil || oauthCreds.RefreshToken == "" {
+		return fmt.Errorf("no refresh token available")
+	}
+
+	form := url.Values{}
+	form.Add("client_id", oauthClientID)
+	form.Add("client_secret", oauthClientSecret)
+	form.Add("refresh_token", oauthCreds.RefreshToken)
+	form.Add("grant_type", "refresh_token")
+
+	req, err := http.NewRequest("POST", "https://oauth2.googleapis.com/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	// Use a new client for the refresh request to avoid deadlocks on the global httpClient
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("token refresh failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var refreshResp TokenRefreshResponse
+	if err := json.Unmarshal(body, &refreshResp); err != nil {
+		return err
+	}
+
+	// Update credentials
+	oauthCreds.AccessToken = refreshResp.AccessToken
+	oauthCreds.ExpiryDate = time.Now().Add(time.Duration(refreshResp.ExpiresIn)*time.Second).Unix() * 1000
+	log.Println("Successfully refreshed OAuth token.")
+
+	// Save the updated credentials back to the file
+	if oauthCredsPath != "" {
+		updatedCredsJSON, err := json.MarshalIndent(oauthCreds, "", "  ")
+		if err != nil {
+			log.Printf("Warning: failed to marshal updated credentials: %v", err)
+			return nil
+		}
+		if err := ioutil.WriteFile(oauthCredsPath, updatedCredsJSON, 0644); err != nil {
+			log.Printf("Warning: failed to write updated credentials to %s: %v", oauthCredsPath, err)
+		} else {
+			log.Printf("Saved refreshed credentials to %s", oauthCredsPath)
 		}
 	}
 
