@@ -93,20 +93,47 @@ func processQueryParams(originalQuery string) (processedQuery string, hasAPIKey 
 	if originalQuery == "" {
 		return "", false
 	}
-	
+
 	values, err := url.ParseQuery(originalQuery)
 	if err != nil {
 		// If we can't parse, return original
 		return originalQuery, false
 	}
-	
+
 	apiKey := values.Get("key")
 	if apiKey != "" {
 		values.Del("key")
 		return values.Encode(), true
 	}
-	
+
 	return originalQuery, false
+}
+
+// unwrapCloudCodeResponse extracts the standard Gemini response from CloudCode's wrapped format
+// CloudCode wraps responses in a "response" field which needs to be unwrapped
+func unwrapCloudCodeResponse(cloudCodeResp map[string]interface{}) map[string]interface{} {
+	// If there's no "response" field, return as-is
+	response, ok := cloudCodeResp["response"].(map[string]interface{})
+	if !ok {
+		return cloudCodeResp
+	}
+
+	// Build the standard Gemini response by merging fields
+	geminiResp := make(map[string]interface{})
+
+	// Copy all fields from the response object
+	for k, v := range response {
+		geminiResp[k] = v
+	}
+
+	// Copy other top-level fields (except "response")
+	for k, v := range cloudCodeResp {
+		if k != "response" {
+			geminiResp[k] = v
+		}
+	}
+
+	return geminiResp
 }
 
 // LoadOAuthCredentials loads OAuth credentials from ~/.gemini/oauth_creds.json
@@ -172,7 +199,7 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 
 	// Extract model and action from the path
 	model, action := parseGeminiPath(r.URL.Path)
-	
+
 	if model == "" || action == "" {
 		log.Printf("Path '%s' did not match expected format.", r.URL.Path)
 		// If the path doesn't match, we can't transform it.
@@ -234,7 +261,7 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 	// Process query parameters and check for API key
 	processedQuery, hasAPIKey := processQueryParams(r.URL.RawQuery)
 	targetURL.RawQuery = processedQuery
-	
+
 	if hasAPIKey {
 		log.Printf("API Key provided in query params, removed it for CloudCode request")
 	}
@@ -299,35 +326,17 @@ func TransformSSELine(line string) string {
 		return line // Return unchanged if we can't parse
 	}
 
-	// CloudCode wraps the response in a "response" field, extract it
-	if response, ok := cloudCodeResp["response"].(map[string]interface{}); ok {
-		// Build the standard Gemini response by merging fields
-		geminiResp := make(map[string]interface{})
+	// Unwrap the CloudCode response
+	geminiResp := unwrapCloudCodeResponse(cloudCodeResp)
 
-		// Copy all fields from the response object
-		for k, v := range response {
-			geminiResp[k] = v
-		}
-
-		// Copy other top-level fields (except "response")
-		for k, v := range cloudCodeResp {
-			if k != "response" {
-				geminiResp[k] = v
-			}
-		}
-
-		// Convert back to JSON
-		transformedJSON, err := json.Marshal(geminiResp)
-		if err != nil {
-			log.Printf("Error marshaling transformed response: %v", err)
-			return line
-		}
-
-		return "data: " + string(transformedJSON)
+	// Convert back to JSON
+	transformedJSON, err := json.Marshal(geminiResp)
+	if err != nil {
+		log.Printf("Error marshaling transformed response: %v", err)
+		return line
 	}
 
-	// If no "response" field, return as-is
-	return line
+	return "data: " + string(transformedJSON)
 }
 
 // TransformJSONResponse transforms a CloudCode JSON response to standard Gemini format
@@ -338,33 +347,15 @@ func TransformJSONResponse(body []byte) []byte {
 		return body // Return unchanged if we can't parse
 	}
 
-	// CloudCode wraps the response in a "response" field, extract it
-	if response, ok := cloudCodeResp["response"].(map[string]interface{}); ok {
-		// Build the standard Gemini response
-		geminiResp := make(map[string]interface{})
+	// Unwrap the CloudCode response
+	geminiResp := unwrapCloudCodeResponse(cloudCodeResp)
 
-		// Copy all fields from the response object
-		for k, v := range response {
-			geminiResp[k] = v
-		}
-
-		// Copy other top-level fields (except "response")
-		for k, v := range cloudCodeResp {
-			if k != "response" {
-				geminiResp[k] = v
-			}
-		}
-
-		// Convert back to JSON
-		transformedJSON, err := json.Marshal(geminiResp)
-		if err != nil {
-			log.Printf("Error marshaling transformed response: %v", err)
-			return body
-		}
-
-		return transformedJSON
+	// Convert back to JSON
+	transformedJSON, err := json.Marshal(geminiResp)
+	if err != nil {
+		log.Printf("Error marshaling transformed response: %v", err)
+		return body
 	}
 
-	// If no "response" field, return as-is
-	return body
+	return transformedJSON
 }

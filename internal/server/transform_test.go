@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -201,11 +202,11 @@ func TestParseGeminiPath(t *testing.T) {
 
 func TestBuildCountTokensRequest(t *testing.T) {
 	tests := []struct {
-		name        string
-		requestData map[string]interface{}
-		model       string
+		name         string
+		requestData  map[string]interface{}
+		model        string
 		wantContains []string
-		wantErr     bool
+		wantErr      bool
 	}{
 		{
 			name: "simple request",
@@ -272,12 +273,12 @@ func TestBuildCountTokensRequest(t *testing.T) {
 
 func TestBuildCloudCodeRequest(t *testing.T) {
 	tests := []struct {
-		name        string
-		requestData map[string]interface{}
-		model       string
-		projectID   string
+		name         string
+		requestData  map[string]interface{}
+		model        string
+		projectID    string
 		wantContains []string
-		wantErr     bool
+		wantErr      bool
 	}{
 		{
 			name: "standard request",
@@ -324,46 +325,46 @@ func TestBuildCloudCodeRequest(t *testing.T) {
 
 func TestProcessQueryParams(t *testing.T) {
 	tests := []struct {
-		name               string
-		originalQuery      string
-		expectedQuery      string
-		expectedHasAPIKey  bool
+		name              string
+		originalQuery     string
+		expectedQuery     string
+		expectedHasAPIKey bool
 	}{
 		{
-			name:               "query with API key",
-			originalQuery:      "key=AIzaSyAbcdef123456&alt=sse",
-			expectedQuery:      "alt=sse",
-			expectedHasAPIKey:  true,
+			name:              "query with API key",
+			originalQuery:     "key=AIzaSyAbcdef123456&alt=sse",
+			expectedQuery:     "alt=sse",
+			expectedHasAPIKey: true,
 		},
 		{
-			name:               "query with only API key",
-			originalQuery:      "key=AIzaSyAbcdef123456",
-			expectedQuery:      "",
-			expectedHasAPIKey:  true,
+			name:              "query with only API key",
+			originalQuery:     "key=AIzaSyAbcdef123456",
+			expectedQuery:     "",
+			expectedHasAPIKey: true,
 		},
 		{
-			name:               "query without API key",
-			originalQuery:      "alt=sse&format=json",
-			expectedQuery:      "alt=sse&format=json",
-			expectedHasAPIKey:  false,
+			name:              "query without API key",
+			originalQuery:     "alt=sse&format=json",
+			expectedQuery:     "alt=sse&format=json",
+			expectedHasAPIKey: false,
 		},
 		{
-			name:               "empty query",
-			originalQuery:      "",
-			expectedQuery:      "",
-			expectedHasAPIKey:  false,
+			name:              "empty query",
+			originalQuery:     "",
+			expectedQuery:     "",
+			expectedHasAPIKey: false,
 		},
 		{
-			name:               "query with multiple params and API key in middle",
-			originalQuery:      "alt=sse&key=AIzaSyAbcdef123456&format=json",
-			expectedQuery:      "alt=sse&format=json",
-			expectedHasAPIKey:  true,
+			name:              "query with multiple params and API key in middle",
+			originalQuery:     "alt=sse&key=AIzaSyAbcdef123456&format=json",
+			expectedQuery:     "alt=sse&format=json",
+			expectedHasAPIKey: true,
 		},
 		{
-			name:               "malformed query",
-			originalQuery:      "invalid%query%params",
-			expectedQuery:      "invalid%query%params",
-			expectedHasAPIKey:  false,
+			name:              "malformed query",
+			originalQuery:     "invalid%query%params",
+			expectedQuery:     "invalid%query%params",
+			expectedHasAPIKey: false,
 		},
 	}
 
@@ -375,6 +376,109 @@ func TestProcessQueryParams(t *testing.T) {
 			}
 			if hasAPIKey != tt.expectedHasAPIKey {
 				t.Errorf("processQueryParams(%q) hasAPIKey = %v, want %v", tt.originalQuery, hasAPIKey, tt.expectedHasAPIKey)
+			}
+		})
+	}
+}
+
+func TestUnwrapCloudCodeResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    map[string]interface{}
+		expected map[string]interface{}
+	}{
+		{
+			name: "response with wrapped content",
+			input: map[string]interface{}{
+				"response": map[string]interface{}{
+					"candidates": []interface{}{
+						map[string]interface{}{
+							"content": map[string]interface{}{
+								"parts": []interface{}{
+									map[string]interface{}{"text": "Hello"},
+								},
+							},
+						},
+					},
+					"promptFeedback": map[string]interface{}{
+						"safetyRatings": []interface{}{},
+					},
+				},
+				"metadata": map[string]interface{}{
+					"requestId": "123",
+				},
+			},
+			expected: map[string]interface{}{
+				"candidates": []interface{}{
+					map[string]interface{}{
+						"content": map[string]interface{}{
+							"parts": []interface{}{
+								map[string]interface{}{"text": "Hello"},
+							},
+						},
+					},
+				},
+				"promptFeedback": map[string]interface{}{
+					"safetyRatings": []interface{}{},
+				},
+				"metadata": map[string]interface{}{
+					"requestId": "123",
+				},
+			},
+		},
+		{
+			name: "response without wrapped content",
+			input: map[string]interface{}{
+				"candidates": []interface{}{
+					map[string]interface{}{
+						"content": map[string]interface{}{
+							"parts": []interface{}{
+								map[string]interface{}{"text": "Direct response"},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"candidates": []interface{}{
+					map[string]interface{}{
+						"content": map[string]interface{}{
+							"parts": []interface{}{
+								map[string]interface{}{"text": "Direct response"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:     "empty response",
+			input:    map[string]interface{}{},
+			expected: map[string]interface{}{},
+		},
+		{
+			name: "response field is not a map",
+			input: map[string]interface{}{
+				"response": "not a map",
+				"other":    "field",
+			},
+			expected: map[string]interface{}{
+				"response": "not a map",
+				"other":    "field",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := unwrapCloudCodeResponse(tt.input)
+
+			// Compare JSON representations for deep equality
+			expectedJSON, _ := json.Marshal(tt.expected)
+			resultJSON, _ := json.Marshal(result)
+
+			if string(expectedJSON) != string(resultJSON) {
+				t.Errorf("unwrapCloudCodeResponse() = %v, want %v", string(resultJSON), string(expectedJSON))
 			}
 		})
 	}
