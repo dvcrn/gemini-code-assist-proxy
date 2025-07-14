@@ -21,7 +21,7 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		var providedToken string
 		authHeader := r.Header.Get("Authorization")
-		xAPIKeyHeader := r.Header.Get("X-API-Key")
+		keyParam := r.URL.Query().Get("key")
 
 		if authHeader != "" {
 			// Expect "Bearer <token>" format, case-insensitive
@@ -33,11 +33,11 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 			providedToken = parts[1]
-		} else if xAPIKeyHeader != "" {
-			// Use the key from X-API-Key header directly
-			providedToken = xAPIKeyHeader
+		} else if keyParam != "" {
+			// Use the key from query parameter directly
+			providedToken = keyParam
 		} else {
-			log.Printf("Missing required Authorization or X-API-Key header for admin endpoint: %s %s from %s",
+			log.Printf("Missing required Authorization header or key query parameter for admin endpoint: %s %s from %s",
 				r.Method, r.RequestURI, r.RemoteAddr)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return

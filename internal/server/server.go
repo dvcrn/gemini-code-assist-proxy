@@ -446,7 +446,7 @@ func (s *Server) callEndpoint(method string, body interface{}) (map[string]inter
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/admin/credentials", s.adminMiddleware(s.credentialsHandler))
 	s.mux.HandleFunc("/admin/credentials/status", s.adminMiddleware(s.credentialsStatusHandler))
-	s.mux.HandleFunc("/", s.HandleProxyRequest)
+	s.mux.HandleFunc("/", s.adminMiddleware(s.HandleProxyRequest))
 }
 
 // ServeHTTP implements http.Handler interface
