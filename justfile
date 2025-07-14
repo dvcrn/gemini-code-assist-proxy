@@ -1,0 +1,3 @@
+# Run all tests
+test:
+    go test -v ./...
