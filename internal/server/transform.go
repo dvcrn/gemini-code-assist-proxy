@@ -270,20 +270,6 @@ func TransformRequest(r *http.Request, body []byte) (*http.Request, error) {
 		proxyReq.Header.Set("x-goog-api-client", "gemini-proxy/1.0")
 	}
 
-	// Log all outgoing headers for debugging
-	log.Println("=== Outgoing request headers to CloudCode ===")
-	for h, vals := range proxyReq.Header {
-		for _, v := range vals {
-			// Redact auth token for security
-			if h == "Authorization" && strings.HasPrefix(v, "Bearer ") {
-				log.Printf("  %s: Bearer [REDACTED]", h)
-			} else {
-				log.Printf("  %s: %s", h, v)
-			}
-		}
-	}
-	log.Println("=== End outgoing headers ===")
-
 	return proxyReq, nil
 }
 

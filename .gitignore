@@ -1,2 +1,8 @@
 .env
 gemini-proxy
+node_modules
+*.wasm
+.wrangler/
+*.folder
+*.har
+*.proxymanlogv2

@@ -15,3 +15,11 @@ format:
     go tool golang.org/x/tools/cmd/goimports -w .
     go tool mvdan.cc/gofumpt -w .
     @echo "All code formatted!"
+
+# Build for Cloudflare Workers
+build-worker:
+    GOOS=js GOARCH=wasm go build -o ./build/app.wasm cmd/gemini-proxy-worker/main.go
+
+# Run wrangler dev
+wrangler-dev: 
+    bunx wrangler dev

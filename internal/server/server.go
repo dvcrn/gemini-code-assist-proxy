@@ -13,18 +13,12 @@ import (
 	"time"
 )
 
-// Global HTTP client with connection pooling
-var httpClient = &http.Client{
-	// No timeout for SSE streaming
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		DisableCompression:  true, // Important for SSE
-		// Enable HTTP/2
-		ForceAttemptHTTP2: true,
-	},
+// Global HTTP client instance
+var httpClient HTTPClient
+
+// InitHTTPClient initializes the global HTTP client
+func InitHTTPClient() {
+	httpClient = NewHTTPClient()
 }
 
 // sseMessage represents a single SSE message to be processed
@@ -260,6 +254,9 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 
 // Start launches the proxy server.
 func Start(addr string) {
+	// Initialize HTTP client
+	InitHTTPClient()
+
 	// Load OAuth credentials on startup
 	if err := LoadOAuthCredentials(); err != nil {
 		log.Printf("Failed to load OAuth credentials: %v", err)
