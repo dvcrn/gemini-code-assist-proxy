@@ -10,7 +10,22 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// Global HTTP client with connection pooling
+var httpClient = &http.Client{
+	// No timeout for SSE streaming
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableCompression:  true, // Important for SSE
+		// Enable HTTP/2
+		ForceAttemptHTTP2: true,
+	},
+}
 
 // sseMessage represents a single SSE message to be processed
 type sseMessage struct {
@@ -27,6 +42,10 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 			bufferSize = size
 		}
 	}
+	
+	debugSSE := os.Getenv("DEBUG_SSE") == "true"
+	startTime := time.Now()
+	eventCount := 0
 
 	// Create channels for the pipeline
 	rawLines := make(chan string, bufferSize)
@@ -40,9 +59,15 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 		// Use a larger buffer for the scanner
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 		
+		firstLine := true
 		for scanner.Scan() {
+			line := scanner.Text()
+			if firstLine && debugSSE {
+				log.Printf("First SSE line received after %v", time.Since(startTime))
+				firstLine = false
+			}
 			select {
-			case rawLines <- scanner.Text():
+			case rawLines <- line:
 			case <-done:
 				return
 			}
@@ -88,10 +113,20 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 			return
 		}
 		
+		// Log SSE events in debug mode
+		if debugSSE && msg.isDataLine {
+			eventCount++
+			log.Printf("SSE event #%d sent to client after %v", eventCount, time.Since(startTime))
+		}
+		
 		// Flush after data lines or empty lines
 		if msg.isDataLine || msg.line == "" {
 			flusher.Flush()
 		}
+	}
+	
+	if debugSSE {
+		log.Printf("SSE streaming completed: %d events in %v", eventCount, time.Since(startTime))
 	}
 }
 
@@ -110,15 +145,19 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(proxyReq)
+	// Log when we're about to send the request
+	startTime := time.Now()
+	log.Printf("Sending request to CloudCode at %s", startTime.Format("15:04:05.000"))
+	
+	resp, err := httpClient.Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Error forwarding request: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	log.Printf("Upstream response status: %s", resp.Status)
+	responseTime := time.Since(startTime)
+	log.Printf("Upstream response status: %s (took %v)", resp.Status, responseTime)
 
 	// Copy headers from the upstream response to the original response writer
 	for h, val := range resp.Header {
