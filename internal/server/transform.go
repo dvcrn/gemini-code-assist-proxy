@@ -7,9 +7,10 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
+
+	"github.com/dvcrn/gemini-cli-proxy/internal/env"
 )
 
 // CloudCodeRequest represents the structure of the request expected by the Cloud Code API.
@@ -167,8 +168,8 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	}
 
 	// Get project ID from environment or use default
-	projectID := os.Getenv("CLOUDCODE_GCP_PROJECT_ID")
-	if projectID == "" {
+	projectID, hasProjectID := env.Get("CLOUDCODE_GCP_PROJECT_ID")
+	if !hasProjectID {
 		var err error
 		projectID, err = s.DiscoverProjectID()
 		if err != nil {
@@ -285,7 +286,7 @@ func TransformSSELine(line string) string {
 	var cloudCodeResp map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonData), &cloudCodeResp); err != nil {
 		// Only log if debug mode is enabled
-		if os.Getenv("DEBUG_SSE") == "true" {
+		if env.GetOrDefault("DEBUG_SSE", "false") == "true" {
 			log.Printf("Error parsing SSE JSON: %v", err)
 		}
 		return line // Return unchanged if we can't parse
@@ -298,7 +299,7 @@ func TransformSSELine(line string) string {
 	transformedJSON, err := json.Marshal(geminiResp)
 	if err != nil {
 		// Only log if debug mode is enabled
-		if os.Getenv("DEBUG_SSE") == "true" {
+		if env.GetOrDefault("DEBUG_SSE", "false") == "true" {
 			log.Printf("Error marshaling transformed response: %v", err)
 		}
 		return line

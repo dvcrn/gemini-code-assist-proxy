@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dvcrn/gemini-cli-proxy/internal/env"
 )
 
 // FileProvider implements CredentialsProvider using file-based storage
@@ -38,7 +40,7 @@ func NewFileProvider() (*FileProvider, error) {
 // determineFilePath sets the file path based on environment variables or defaults
 func (f *FileProvider) determineFilePath() error {
 	// 1. Check for file path in environment variable
-	if credsPath := os.Getenv("CLOUDCODE_OAUTH_CREDS_PATH"); credsPath != "" {
+	if credsPath, ok := env.Get("CLOUDCODE_OAUTH_CREDS_PATH"); ok {
 		f.filePath = credsPath
 		return nil
 	}
@@ -71,7 +73,7 @@ func (f *FileProvider) GetCredentials() (*OAuthCredentials, error) {
 	}
 
 	// Fallback to raw JSON from environment variable
-	if credsJSON := os.Getenv("CLOUDCODE_OAUTH_CREDS"); credsJSON != "" {
+	if credsJSON, ok := env.Get("CLOUDCODE_OAUTH_CREDS"); ok {
 		creds := &OAuthCredentials{}
 		if err := json.Unmarshal([]byte(credsJSON), creds); err != nil {
 			return nil, fmt.Errorf("failed to parse CLOUDCODE_OAUTH_CREDS: %w", err)

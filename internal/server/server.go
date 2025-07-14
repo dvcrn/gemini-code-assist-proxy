@@ -9,12 +9,12 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
+	"github.com/dvcrn/gemini-cli-proxy/internal/env"
 )
 
 // Server represents the proxy server with its dependencies
@@ -43,13 +43,13 @@ type sseMessage struct {
 func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flusher) {
 	// Get buffer size from environment, default to 3
 	bufferSize := 3
-	if envSize := os.Getenv("SSE_BUFFER_SIZE"); envSize != "" {
+	if envSize, ok := env.Get("SSE_BUFFER_SIZE"); ok {
 		if size, err := strconv.Atoi(envSize); err == nil && size > 0 {
 			bufferSize = size
 		}
 	}
 
-	debugSSE := os.Getenv("DEBUG_SSE") == "true"
+	debugSSE := env.GetOrDefault("DEBUG_SSE", "false") == "true"
 	startTime := time.Now()
 	eventCount := 0
 

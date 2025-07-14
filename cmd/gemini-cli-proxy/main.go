@@ -2,17 +2,14 @@ package main
 
 import (
 	"log"
-	"os"
 
 	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
+	"github.com/dvcrn/gemini-cli-proxy/internal/env"
 	"github.com/dvcrn/gemini-cli-proxy/internal/server"
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "9877"
-	}
+	port := env.GetOrDefault("PORT", "9877")
 
 	// Create file provider
 	provider, err := credentials.NewFileProvider()
