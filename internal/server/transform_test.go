@@ -121,3 +121,79 @@ func TestNormalizeModelName(t *testing.T) {
 		})
 	}
 }
+
+func TestParseGeminiPath(t *testing.T) {
+	tests := []struct {
+		name           string
+		path           string
+		expectedModel  string
+		expectedAction string
+	}{
+		{
+			name:           "v1beta path with generateContent",
+			path:           "/v1beta/models/gemini-pro:generateContent",
+			expectedModel:  "gemini-pro",
+			expectedAction: "generateContent",
+		},
+		{
+			name:           "v1 path with streamGenerateContent",
+			path:           "/v1/models/gemini-2.5-flash:streamGenerateContent",
+			expectedModel:  "gemini-2.5-flash",
+			expectedAction: "streamGenerateContent",
+		},
+		{
+			name:           "path with countTokens",
+			path:           "/v1beta/models/gemini-1.5-pro:countTokens",
+			expectedModel:  "gemini-1.5-pro",
+			expectedAction: "countTokens",
+		},
+		{
+			name:           "model with version and variant",
+			path:           "/v1beta/models/gemini-2.0-pro-latest:generateContent",
+			expectedModel:  "gemini-2.0-pro-latest",
+			expectedAction: "generateContent",
+		},
+		{
+			name:           "invalid path - no model",
+			path:           "/v1beta/generateContent",
+			expectedModel:  "",
+			expectedAction: "",
+		},
+		{
+			name:           "invalid path - no action",
+			path:           "/v1beta/models/gemini-pro",
+			expectedModel:  "",
+			expectedAction: "",
+		},
+		{
+			name:           "invalid path - wrong format",
+			path:           "/api/v2/models/gemini-pro:generateContent",
+			expectedModel:  "",
+			expectedAction: "",
+		},
+		{
+			name:           "empty path",
+			path:           "",
+			expectedModel:  "",
+			expectedAction: "",
+		},
+		{
+			name:           "path with extra segments",
+			path:           "/v1beta/models/gemini-pro:generateContent/extra",
+			expectedModel:  "gemini-pro",
+			expectedAction: "generateContent/extra",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model, action := parseGeminiPath(tt.path)
+			if model != tt.expectedModel {
+				t.Errorf("parseGeminiPath(%q) model = %q, want %q", tt.path, model, tt.expectedModel)
+			}
+			if action != tt.expectedAction {
+				t.Errorf("parseGeminiPath(%q) action = %q, want %q", tt.path, action, tt.expectedAction)
+			}
+		})
+	}
+}

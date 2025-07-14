@@ -31,6 +31,18 @@ type OAuthCredentials struct {
 
 var oauthCreds *OAuthCredentials
 
+var geminiPathRegex = regexp.MustCompile(`v1(?:beta)?/models/([^/:]+):(.+)`)
+
+// parseGeminiPath extracts the model and action from a Gemini API path
+// Returns empty strings if the path doesn't match the expected format
+func parseGeminiPath(path string) (model, action string) {
+	matches := geminiPathRegex.FindStringSubmatch(path)
+	if len(matches) < 3 {
+		return "", ""
+	}
+	return matches[1], matches[2]
+}
+
 // normalizeModelName converts any model name containing "pro" or "flash" to the
 // only two models supported by CloudCode: gemini-2.5-pro and gemini-2.5-flash
 func normalizeModelName(model string) string {
@@ -105,12 +117,10 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 		return nil, err
 	}
 
-	// Regex to extract model and action from the path
-	// Handle paths like /v1/... or /v1beta/...
-	re := regexp.MustCompile(`v1(?:beta)?/models/([^/:]+):(.+)`)
-	matches := re.FindStringSubmatch(r.URL.Path)
-
-	if len(matches) < 3 {
+	// Extract model and action from the path
+	model, action := parseGeminiPath(r.URL.Path)
+	
+	if model == "" || action == "" {
 		log.Printf("Path '%s' did not match expected format.", r.URL.Path)
 		// If the path doesn't match, we can't transform it.
 		// We'll just forward it as is.
@@ -121,9 +131,6 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 		proxyReq.Header = r.Header
 		return proxyReq, nil
 	}
-
-	model := matches[1]
-	action := matches[2]
 	log.Printf("Extracted Model: %s, Action: %s", model, action)
 
 	// Normalize model name
