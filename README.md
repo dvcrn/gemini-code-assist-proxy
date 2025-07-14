@@ -2,11 +2,12 @@
 
 A Go proxy server that transforms standard Gemini API requests into CloudCode format (`cloudcode-pa.googleapis.com`), enabling standard Gemini clients to work with Google's Gemini Code Assist backend.
 
-## Features
+## What it does
 
-- **Model Normalization**: Any model with "pro" → `gemini-2.5-pro`, any with "flash" → `gemini-2.5-flash`
-- **SSE Streaming**: Real-time streaming with goroutine pipelines
-- **OAuth2 Authentication**: Uses local credentials from `~/.gemini/oauth_creds.json`
+- Transforms `generateContent` and `streamGenerateContent` requests/responses
+- Transforms `countTokens` requests/responses
+- Supports streaming responses and tool calls
+- Normalizes model names: any model with "pro" → `gemini-2.5-pro`, any with "flash" → `gemini-2.5-flash`
 
 ## Prerequisites
 
