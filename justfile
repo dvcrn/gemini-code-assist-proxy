@@ -1,3 +1,11 @@
+# Build the proxy
+build:
+    go build -o gemini-proxy ./cmd/gemini-cli-proxy
+
+# Run the proxy
+run:
+    go run ./cmd/gemini-cli-proxy
+
 # Run all tests
 test:
     go test -v ./...
