@@ -1,7 +1,16 @@
 package main
 
-import "github.com/dvcrn/gemini-cli-proxy/internal/server"
+import (
+	"os"
+
+	"github.com/dvcrn/gemini-cli-proxy/internal/server"
+)
 
 func main() {
-	server.Start(":8083")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "9877"
+	}
+
+	server.Start(":" + port)
 }
