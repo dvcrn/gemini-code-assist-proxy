@@ -25,7 +25,7 @@ type CloudflareKVProvider struct {
 func NewCloudflareKVProvider() (*CloudflareKVProvider, error) {
 	// In Cloudflare Workers, KV namespaces are accessed via bindings
 	// The binding name is configured in wrangler.toml
-	kvStore, err := kv.NewNamespace("GEMINI_CLI_KV")
+	kvStore, err := kv.NewNamespace("gemini_cli_proxy_kv")
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize KV namespace: %w", err)
 	}
@@ -41,7 +41,7 @@ func NewCloudflareKVProvider() (*CloudflareKVProvider, error) {
 // GetCredentials retrieves credentials from Cloudflare KV
 func (c *CloudflareKVProvider) GetCredentials() (*OAuthCredentials, error) {
 	// Get credentials JSON from KV
-	credsJSON, err := c.kvStore.GetString("claude_oauth_credentials", nil)
+	credsJSON, err := c.kvStore.GetString("gemini_cli_oauth_credentials", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get credentials from KV: %w", err)
 	}
@@ -68,7 +68,7 @@ func (c *CloudflareKVProvider) SaveCredentials(creds *OAuthCredentials) error {
 	}
 
 	// Store in KV
-	if err := c.kvStore.PutString("claude_oauth_credentials", string(credsJSON), nil); err != nil {
+	if err := c.kvStore.PutString("gemini_cli_oauth_credentials", string(credsJSON), nil); err != nil {
 		return fmt.Errorf("failed to store credentials in KV: %w", err)
 	}
 
