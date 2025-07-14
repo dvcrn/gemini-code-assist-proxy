@@ -44,7 +44,7 @@ type sseMessage struct {
 }
 
 // streamSSEResponse handles SSE streaming with a goroutine pipeline for better performance
-func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flusher) {
+func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flusher, canFlush bool) {
 	// Get buffer size from environment, default to 3
 	bufferSize := 3
 	if envSize, ok := env.Get("SSE_BUFFER_SIZE"); ok {
@@ -129,8 +129,8 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 			log.Printf("SSE event #%d sent to client after %v", eventCount, time.Since(startTime))
 		}
 
-		// Flush after data lines or empty lines
-		if msg.isDataLine || msg.line == "" {
+		// Flush after data lines or empty lines (if flushing is available)
+		if (msg.isDataLine || msg.line == "") && canFlush {
 			flusher.Flush()
 		}
 	}
@@ -233,16 +233,14 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(resp.StatusCode)
 
-		// Create a flusher for real-time streaming
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			log.Println("ResponseWriter does not support flushing")
-			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-			return
+		// Check if flushing is available (graceful fallback if not)
+		flusher, canFlush := w.(http.Flusher)
+		if !canFlush {
+			log.Println("ResponseWriter does not support flushing - streaming may be buffered")
 		}
 
 		// Use goroutine pipeline for better streaming performance
-		streamSSEResponse(resp.Body, w, flusher)
+		streamSSEResponse(resp.Body, w, flusher, canFlush)
 	} else {
 		// Handle non-streaming response
 		w.WriteHeader(resp.StatusCode)
