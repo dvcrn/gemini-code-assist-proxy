@@ -29,7 +29,7 @@ var httpClient = &http.Client{
 
 // sseMessage represents a single SSE message to be processed
 type sseMessage struct {
-	line      string
+	line       string
 	isDataLine bool
 }
 
@@ -42,7 +42,7 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 			bufferSize = size
 		}
 	}
-	
+
 	debugSSE := os.Getenv("DEBUG_SSE") == "true"
 	startTime := time.Now()
 	eventCount := 0
@@ -51,14 +51,14 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 	rawLines := make(chan string, bufferSize)
 	transformedLines := make(chan sseMessage, bufferSize)
 	done := make(chan struct{})
-	
+
 	// Goroutine 1: Read lines from response body
 	go func() {
 		defer close(rawLines)
 		scanner := bufio.NewScanner(body)
 		// Use a larger buffer for the scanner
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-		
+
 		firstLine := true
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -72,7 +72,7 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 				return
 			}
 		}
-		
+
 		if err := scanner.Err(); err != nil {
 			log.Printf("Error reading stream: %v", err)
 		}
@@ -83,10 +83,10 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 		defer close(transformedLines)
 		for line := range rawLines {
 			msg := sseMessage{
-				line:      line,
+				line:       line,
 				isDataLine: strings.HasPrefix(line, "data: "),
 			}
-			
+
 			// Only transform data lines
 			if msg.isDataLine {
 				if transformed := TransformSSELine(line); transformed != "" {
@@ -95,7 +95,7 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 					continue // Skip empty transformations
 				}
 			}
-			
+
 			select {
 			case transformedLines <- msg:
 			case <-done:
@@ -106,25 +106,25 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 
 	// Main goroutine: Write to client
 	defer close(done)
-	
+
 	for msg := range transformedLines {
 		if _, err := fmt.Fprintf(w, "%s\n", msg.line); err != nil {
 			log.Printf("Error writing to client: %v", err)
 			return
 		}
-		
+
 		// Log SSE events in debug mode
 		if debugSSE && msg.isDataLine {
 			eventCount++
 			log.Printf("SSE event #%d sent to client after %v", eventCount, time.Since(startTime))
 		}
-		
+
 		// Flush after data lines or empty lines
 		if msg.isDataLine || msg.line == "" {
 			flusher.Flush()
 		}
 	}
-	
+
 	if debugSSE {
 		log.Printf("SSE streaming completed: %d events in %v", eventCount, time.Since(startTime))
 	}
@@ -148,11 +148,37 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 	// Log when we're about to send the request
 	startTime := time.Now()
 	log.Printf("Sending request to CloudCode at %s", startTime.Format("15:04:05.000"))
-	
+
 	resp, err := httpClient.Do(proxyReq)
 	if err != nil {
 		http.Error(w, "Error forwarding request: "+err.Error(), http.StatusBadGateway)
 		return
+	}
+
+	// Check for 401 Unauthorized and attempt a token refresh
+	if resp.StatusCode == http.StatusUnauthorized {
+		log.Println("Received 401 Unauthorized, attempting to refresh token...")
+		resp.Body.Close() // Close the first response body
+
+		if err := refreshAccessToken(); err != nil {
+			http.Error(w, "Failed to refresh token: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		// Re-create the request with the new token
+		// We need to re-read the body from the original request
+		newProxyReq, err := TransformRequest(r)
+		if err != nil {
+			http.Error(w, "Error re-transforming request after refresh: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		log.Println("Retrying request with new token...")
+		resp, err = httpClient.Do(newProxyReq)
+		if err != nil {
+			http.Error(w, "Error forwarding request after refresh: "+err.Error(), http.StatusBadGateway)
+			return
+		}
 	}
 	defer resp.Body.Close()
 

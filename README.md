@@ -43,25 +43,25 @@ just run
 
 ## Configuration
 
+The proxy supports two main authentication methods, with the following order of precedence:
+
+1.  **GCP Project ID**: If you set the `CLOUDCODE_GCP_PROJECT_ID` environment variable, the proxy will use this ID for all requests. This method is suitable for users who want to use a specific GCP project.
+2.  **OAuth Credentials (Automatic Discovery)**: If `CLOUDCODE_GCP_PROJECT_ID` is not set, the proxy will attempt to automatically discover a project ID using your OAuth credentials. It loads credentials in the following order:
+    *   **`CLOUDCODE_OAUTH_CREDS_PATH`**: The file path to your `oauth_creds.json` file.
+    *   **Default Location**:
+        *   `~/.gemini/oauth_creds.json` (the default Gemini CLI location)
+    *   **`CLOUDCODE_OAUTH_CREDS`**: The raw JSON content of your credentials.
+
 Configure the proxy using environment variables:
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `PORT` | The port for the proxy server | `9877` | No |
-| `CLOUDCODE_GCP_PROJECT_ID` | Google Cloud Project ID for Gemini Code Assist API | - | **Yes** |
-| `CLOUDCODE_OAUTH_CREDS` | OAuth credentials JSON content | - | **Yes** |
-| `SSE_BUFFER_SIZE` | Buffer size for SSE streaming pipeline | `3` | No |
-| `DEBUG_SSE` | Enable detailed SSE event logging | `false` | No |
-
-### Setting up OAuth Credentials
-
-The proxy expects OAuth credentials to be available. Set up your credentials:
-
-1. Ensure your OAuth credentials are stored in `~/.gemini/oauth_creds.json`
-2. The `.envrc` file will automatically load them:
-   ```bash
-   export CLOUDCODE_OAUTH_CREDS=$(cat ~/.gemini/oauth_creds.json)
-   ```
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `PORT` | The port for the proxy server. | `9877` |
+| `CLOUDCODE_GCP_PROJECT_ID` | The Google Cloud Project ID. | (none) |
+| `CLOUDCODE_OAUTH_CREDS_PATH` | Path to the `oauth_creds.json` file. | (none) |
+| `CLOUDCODE_OAUTH_CREDS` | Raw JSON content of the credentials. | (none) |
+| `SSE_BUFFER_SIZE` | Buffer size for SSE streaming pipeline | `3` |
+| `DEBUG_SSE` | Enable detailed SSE event logging | `false` |
 
 ## Core Transformations
 

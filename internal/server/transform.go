@@ -175,7 +175,14 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 	// Get project ID from environment or use default
 	projectID := os.Getenv("CLOUDCODE_GCP_PROJECT_ID")
 	if projectID == "" {
-		log.Fatal("no project id set")
+		var err error
+		projectID, err = DiscoverProjectID()
+		if err != nil {
+			log.Printf("Error discovering project ID: %v", err)
+			return nil, err
+		}
+	} else {
+		log.Printf("Using project ID from CLOUDCODE_GCP_PROJECT_ID environment variable: %s", projectID)
 	}
 
 	// Build the appropriate request body based on the action
