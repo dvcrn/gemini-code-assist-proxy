@@ -3,11 +3,97 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 )
+
+// sseMessage represents a single SSE message to be processed
+type sseMessage struct {
+	line      string
+	isDataLine bool
+}
+
+// streamSSEResponse handles SSE streaming with a goroutine pipeline for better performance
+func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flusher) {
+	// Get buffer size from environment, default to 3
+	bufferSize := 3
+	if envSize := os.Getenv("SSE_BUFFER_SIZE"); envSize != "" {
+		if size, err := strconv.Atoi(envSize); err == nil && size > 0 {
+			bufferSize = size
+		}
+	}
+
+	// Create channels for the pipeline
+	rawLines := make(chan string, bufferSize)
+	transformedLines := make(chan sseMessage, bufferSize)
+	done := make(chan struct{})
+	
+	// Goroutine 1: Read lines from response body
+	go func() {
+		defer close(rawLines)
+		scanner := bufio.NewScanner(body)
+		// Use a larger buffer for the scanner
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		
+		for scanner.Scan() {
+			select {
+			case rawLines <- scanner.Text():
+			case <-done:
+				return
+			}
+		}
+		
+		if err := scanner.Err(); err != nil {
+			log.Printf("Error reading stream: %v", err)
+		}
+	}()
+
+	// Goroutine 2: Transform lines
+	go func() {
+		defer close(transformedLines)
+		for line := range rawLines {
+			msg := sseMessage{
+				line:      line,
+				isDataLine: strings.HasPrefix(line, "data: "),
+			}
+			
+			// Only transform data lines
+			if msg.isDataLine {
+				if transformed := TransformSSELine(line); transformed != "" {
+					msg.line = transformed
+				} else {
+					continue // Skip empty transformations
+				}
+			}
+			
+			select {
+			case transformedLines <- msg:
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	// Main goroutine: Write to client
+	defer close(done)
+	
+	for msg := range transformedLines {
+		if _, err := fmt.Fprintf(w, "%s\n", msg.line); err != nil {
+			log.Printf("Error writing to client: %v", err)
+			return
+		}
+		
+		// Flush after data lines or empty lines
+		if msg.isDataLine || msg.line == "" {
+			flusher.Flush()
+		}
+	}
+}
 
 // HandleProxyRequest is the main handler for all incoming proxy requests.
 func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
@@ -65,30 +151,8 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Stream the response
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			// Transform CloudCode SSE response to standard Gemini format
-			if strings.HasPrefix(line, "data: ") {
-				transformedLine := TransformSSELine(line)
-				if transformedLine != "" {
-					fmt.Fprintf(w, "%s\n", transformedLine)
-					flusher.Flush()
-				}
-			} else {
-				// Pass through empty lines and other SSE fields
-				fmt.Fprintf(w, "%s\n", line)
-				if line == "" {
-					flusher.Flush()
-				}
-			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			log.Printf("Error reading stream: %v", err)
-		}
+		// Use goroutine pipeline for better streaming performance
+		streamSSEResponse(resp.Body, w, flusher)
 	} else {
 		// Handle non-streaming response
 		w.WriteHeader(resp.StatusCode)

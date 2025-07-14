@@ -274,7 +274,10 @@ func TransformSSELine(line string) string {
 	// Parse the JSON
 	var cloudCodeResp map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonData), &cloudCodeResp); err != nil {
-		log.Printf("Error parsing SSE JSON: %v", err)
+		// Only log if debug mode is enabled
+		if os.Getenv("DEBUG_SSE") == "true" {
+			log.Printf("Error parsing SSE JSON: %v", err)
+		}
 		return line // Return unchanged if we can't parse
 	}
 
@@ -284,7 +287,10 @@ func TransformSSELine(line string) string {
 	// Convert back to JSON
 	transformedJSON, err := json.Marshal(geminiResp)
 	if err != nil {
-		log.Printf("Error marshaling transformed response: %v", err)
+		// Only log if debug mode is enabled
+		if os.Getenv("DEBUG_SSE") == "true" {
+			log.Printf("Error marshaling transformed response: %v", err)
+		}
 		return line
 	}
 
