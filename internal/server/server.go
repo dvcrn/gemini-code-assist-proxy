@@ -139,7 +139,15 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}())
 
-	proxyReq, err := TransformRequest(r)
+	// Read the request body once to enable retry after OAuth refresh
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Error reading request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	r.Body.Close()
+
+	proxyReq, err := TransformRequest(r, body)
 	if err != nil {
 		http.Error(w, "Error transforming request: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -165,9 +173,8 @@ func HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Re-create the request with the new token
-		// We need to re-read the body from the original request
-		newProxyReq, err := TransformRequest(r)
+		// Re-create the request with the new token using the saved body
+		newProxyReq, err := TransformRequest(r, body)
 		if err != nil {
 			http.Error(w, "Error re-transforming request after refresh: "+err.Error(), http.StatusInternalServerError)
 			return

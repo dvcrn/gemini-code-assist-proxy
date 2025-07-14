@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -126,15 +125,10 @@ func unwrapCloudCodeResponse(cloudCodeResp map[string]interface{}) map[string]in
 }
 
 // TransformRequest rewrites the incoming standard Gemini request to the Cloud Code format.
-func TransformRequest(r *http.Request) (*http.Request, error) {
+func TransformRequest(r *http.Request, body []byte) (*http.Request, error) {
 	log.Println("--- Start Request Transformation ---")
 	defer log.Println("--- End Request Transformation ---")
 
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.Printf("Error reading request body: %v", err)
-		return nil, err
-	}
 	// Log truncated request body for debugging
 	bodyPreview := string(body)
 	if len(bodyPreview) > 200 {
@@ -187,6 +181,7 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 
 	// Build the appropriate request body based on the action
 	var newBody []byte
+	var err error
 	if action == "countTokens" {
 		newBody, err = buildCountTokensRequest(requestData, model)
 		if err != nil {
@@ -221,10 +216,6 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 	processedQuery, hasAPIKey := processQueryParams(r.URL.RawQuery)
 	targetURL.RawQuery = processedQuery
 
-	if hasAPIKey {
-		log.Printf("API Key provided in query params, removed it for CloudCode request")
-	}
-
 	log.Printf("Target URL: %s", targetURL.String())
 
 	// Create the proxy request with the updated URL
@@ -241,20 +232,32 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 		if h == "Authorization" || h == "Host" || h == "Content-Length" {
 			continue
 		}
+		// Also skip any potential API key headers
+		lowerHeader := strings.ToLower(h)
+		if strings.Contains(lowerHeader, "api-key") || lowerHeader == "x-goog-api-key" {
+			log.Printf("Skipping potential API key header: %s", h)
+			continue
+		}
 		proxyReq.Header[h] = val
 	}
 
-	// Set authorization based on whether API key was provided
-	if hasAPIKey {
-		// Use OAuth token from loaded credentials
+	// Set authorization header
+	clientAuthHeader := r.Header.Get("Authorization")
+	if clientAuthHeader != "" {
+		// Client provided their own authorization, use it
+		proxyReq.Header.Set("Authorization", clientAuthHeader)
+	} else {
+		// No client authorization provided, use OAuth credentials
 		if oauthCreds != nil && oauthCreds.AccessToken != "" {
 			proxyReq.Header.Set("Authorization", "Bearer "+oauthCreds.AccessToken)
 		} else {
-			log.Printf("Warning: No OAuth credentials loaded, authentication will likely fail")
+			log.Printf("Warning: No OAuth credentials loaded and no client authorization provided")
 		}
-	} else if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		// Pass through existing Authorization header if present
-		proxyReq.Header.Set("Authorization", authHeader)
+	}
+
+	// Log whether API key was in the URL (for debugging)
+	if hasAPIKey {
+		log.Printf("API Key provided in query params, removed it for CloudCode request")
 	}
 
 	// Set required headers for CloudCode
@@ -266,6 +269,20 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 	if proxyReq.Header.Get("x-goog-api-client") == "" {
 		proxyReq.Header.Set("x-goog-api-client", "gemini-proxy/1.0")
 	}
+
+	// Log all outgoing headers for debugging
+	log.Println("=== Outgoing request headers to CloudCode ===")
+	for h, vals := range proxyReq.Header {
+		for _, v := range vals {
+			// Redact auth token for security
+			if h == "Authorization" && strings.HasPrefix(v, "Bearer ") {
+				log.Printf("  %s: Bearer [REDACTED]", h)
+			} else {
+				log.Printf("  %s: %s", h, v)
+			}
+		}
+	}
+	log.Println("=== End outgoing headers ===")
 
 	return proxyReq, nil
 }
