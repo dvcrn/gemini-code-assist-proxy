@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -193,6 +194,129 @@ func TestParseGeminiPath(t *testing.T) {
 			}
 			if action != tt.expectedAction {
 				t.Errorf("parseGeminiPath(%q) action = %q, want %q", tt.path, action, tt.expectedAction)
+			}
+		})
+	}
+}
+
+func TestBuildCountTokensRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestData map[string]interface{}
+		model       string
+		wantContains []string
+		wantErr     bool
+	}{
+		{
+			name: "simple request",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"parts": []interface{}{
+							map[string]interface{}{"text": "Hello"},
+						},
+						"role": "user",
+					},
+				},
+			},
+			model: "gemini-2.5-pro",
+			wantContains: []string{
+				`"request":{`,
+				`"model":"models/gemini-2.5-pro"`,
+				`"contents":[`,
+				`"text":"Hello"`,
+			},
+		},
+		{
+			name: "request with generateContentRequest wrapper",
+			requestData: map[string]interface{}{
+				"generateContentRequest": map[string]interface{}{
+					"contents": []interface{}{
+						map[string]interface{}{
+							"parts": []interface{}{
+								map[string]interface{}{"text": "Test"},
+							},
+							"role": "user",
+						},
+					},
+				},
+			},
+			model: "gemini-2.5-flash",
+			wantContains: []string{
+				`"request":{`,
+				`"model":"models/gemini-2.5-flash"`,
+				`"contents":[`,
+				`"text":"Test"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildCountTokensRequest(tt.requestData, tt.model)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("buildCountTokensRequest() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil {
+				gotStr := string(got)
+				for _, want := range tt.wantContains {
+					if !strings.Contains(gotStr, want) {
+						t.Errorf("buildCountTokensRequest() = %v, want to contain %v", gotStr, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestBuildCloudCodeRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestData map[string]interface{}
+		model       string
+		projectID   string
+		wantContains []string
+		wantErr     bool
+	}{
+		{
+			name: "standard request",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"parts": []interface{}{
+							map[string]interface{}{"text": "Hello world"},
+						},
+						"role": "user",
+					},
+				},
+			},
+			model:     "gemini-2.5-pro",
+			projectID: "test-project",
+			wantContains: []string{
+				`"model":"gemini-2.5-pro"`,
+				`"project":"test-project"`,
+				`"request":{`,
+				`"contents":[`,
+				`"text":"Hello world"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildCloudCodeRequest(tt.requestData, tt.model, tt.projectID)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("buildCloudCodeRequest() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil {
+				gotStr := string(got)
+				for _, want := range tt.wantContains {
+					if !strings.Contains(gotStr, want) {
+						t.Errorf("buildCloudCodeRequest() = %v, want to contain %v", gotStr, want)
+					}
+				}
 			}
 		})
 	}

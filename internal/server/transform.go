@@ -56,6 +56,37 @@ func normalizeModelName(model string) string {
 	return model
 }
 
+// buildCountTokensRequest creates a request body for the countTokens action
+// CloudCode expects only { "request": {...} } structure for countTokens
+func buildCountTokensRequest(requestData map[string]interface{}, model string) ([]byte, error) {
+	// Extract the generateContentRequest wrapper if present
+	innerRequest := requestData
+	if genContentReq, ok := requestData["generateContentRequest"].(map[string]interface{}); ok {
+		innerRequest = genContentReq
+	}
+
+	// Add the model to the inner request
+	innerRequest["model"] = "models/" + model
+
+	// Create the countTokens request structure
+	countTokensReq := map[string]interface{}{
+		"request": innerRequest,
+	}
+
+	return json.Marshal(countTokensReq)
+}
+
+// buildCloudCodeRequest creates a standard CloudCode request body
+// Used for actions like streamGenerateContent and generateContent
+func buildCloudCodeRequest(requestData map[string]interface{}, model, projectID string) ([]byte, error) {
+	cloudCodeReq := CloudCodeRequest{
+		Model:   model,
+		Project: projectID,
+		Request: requestData,
+	}
+	return json.Marshal(cloudCodeReq)
+}
+
 // LoadOAuthCredentials loads OAuth credentials from ~/.gemini/oauth_creds.json
 func LoadOAuthCredentials() error {
 	homeDir, err := os.UserHomeDir()
@@ -146,41 +177,18 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 		log.Fatal("no project id set")
 	}
 
-	// Handle different request structures based on the action
+	// Build the appropriate request body based on the action
 	var newBody []byte
-
 	if action == "countTokens" {
-		// For countTokens, CloudCode expects only { "request": {...} } structure
-		// Extract the generateContentRequest wrapper if present
-		innerRequest := requestData
-		if genContentReq, ok := requestData["generateContentRequest"].(map[string]interface{}); ok {
-			innerRequest = genContentReq
-		}
-
-		// Add the model to the inner request
-		innerRequest["model"] = "models/" + model
-
-		// Create the countTokens request structure
-		countTokensReq := map[string]interface{}{
-			"request": innerRequest,
-		}
-
-		newBody, err = json.Marshal(countTokensReq)
+		newBody, err = buildCountTokensRequest(requestData, model)
 		if err != nil {
-			log.Printf("Error marshaling countTokens request: %v", err)
+			log.Printf("Error building countTokens request: %v", err)
 			return nil, err
 		}
 	} else {
-		// For other actions (streamGenerateContent, generateContent), use the standard CloudCode structure
-		cloudCodeReq := CloudCodeRequest{
-			Model:   model,
-			Project: projectID,
-			Request: requestData,
-		}
-
-		newBody, err = json.Marshal(cloudCodeReq)
+		newBody, err = buildCloudCodeRequest(requestData, model, projectID)
 		if err != nil {
-			log.Printf("Error marshaling request body: %v", err)
+			log.Printf("Error building CloudCode request: %v", err)
 			return nil, err
 		}
 	}
