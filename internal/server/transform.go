@@ -113,6 +113,17 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 	action := matches[2]
 	log.Printf("Extracted Model: %s, Action: %s", model, action)
 
+	// Normalize model name - CloudCode only supports gemini-2.5-pro and gemini-2.5-flash
+	originalModel := model
+	if strings.Contains(strings.ToLower(model), "pro") {
+		model = "gemini-2.5-pro"
+	} else if strings.Contains(strings.ToLower(model), "flash") {
+		model = "gemini-2.5-flash"
+	}
+	if model != originalModel {
+		log.Printf("Normalized model from %s to %s", originalModel, model)
+	}
+
 	// Get project ID from environment or use default
 	projectID := os.Getenv("CLOUDCODE_PROJECT_ID")
 	if projectID == "" {
