@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"time"
@@ -19,26 +18,21 @@ type OAuthCredentials struct {
 
 var oauthCreds *OAuthCredentials
 
-// LoadOAuthCredentials loads OAuth credentials from ~/.gemini/oauth_creds.json
+// LoadOAuthCredentials loads OAuth credentials from the CLOUDCODE_OAUTH_CREDS environment variable
 func LoadOAuthCredentials() error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %v", err)
+	credsJSON := os.Getenv("CLOUDCODE_OAUTH_CREDS")
+	if credsJSON == "" {
+		return fmt.Errorf("CLOUDCODE_OAUTH_CREDS environment variable not set or empty")
 	}
 
-	credsPath := fmt.Sprintf("%s/.gemini/oauth_creds.json", homeDir)
-	data, err := ioutil.ReadFile(credsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read oauth_creds.json: %v", err)
-	}
-
+	data := []byte(credsJSON)
 	creds := &OAuthCredentials{}
 	if err := json.Unmarshal(data, creds); err != nil {
-		return fmt.Errorf("failed to parse oauth_creds.json: %v", err)
+		return fmt.Errorf("failed to parse CLOUDCODE_OAUTH_CREDS: %v", err)
 	}
 
 	oauthCreds = creds
-	log.Printf("Loaded OAuth credentials from %s", credsPath)
+	log.Println("Loaded OAuth credentials from CLOUDCODE_OAUTH_CREDS environment variable")
 
 	// Check if token is expired
 	if creds.ExpiryDate > 0 {
@@ -46,7 +40,7 @@ func LoadOAuthCredentials() error {
 		currentTime := time.Now().Unix()
 		if currentTime >= expiryTime {
 			log.Printf("WARNING: OAuth token has expired (expired at %v)", time.Unix(expiryTime, 0))
-			log.Println("Please refresh your OAuth credentials in ~/.gemini/oauth_creds.json")
+			log.Println("Please refresh your OAuth credentials in the CLOUDCODE_OAUTH_CREDS environment variable")
 		} else {
 			timeUntilExpiry := time.Duration(expiryTime-currentTime) * time.Second
 			log.Printf("OAuth token valid for %v", timeUntilExpiry)
