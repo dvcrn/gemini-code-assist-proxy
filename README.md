@@ -1,6 +1,6 @@
-# Gemini API Proxy for CloudCode
+# Gemini CLI API Proxy
 
-A Go proxy server that transforms standard Gemini API requests into CloudCode format (`cloudcode-pa.googleapis.com`), enabling standard Gemini clients to work with Google's Gemini Code Assist backend.
+A Go proxy server that transforms standard Gemini API requests into the format expected by Google's Gemini Code Assist API (`cloudcode-pa.googleapis.com`), enabling standard Gemini clients to work with the Code Assist backend.
 
 ## What it does
 
@@ -12,8 +12,8 @@ A Go proxy server that transforms standard Gemini API requests into CloudCode fo
 ## Prerequisites
 
 - Go 1.19 or later
-- Valid OAuth credentials for CloudCode API (stored in `~/.gemini/oauth_creds.json`)
-- Google Cloud Project ID with CloudCode API access
+- Valid OAuth credentials for Gemini Code Assist API (stored in `~/.gemini/oauth_creds.json`)
+- Google Cloud Project ID with Gemini Code Assist API access
 
 ## Installation
 
@@ -48,7 +48,7 @@ Configure the proxy using environment variables:
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `PORT` | The port for the proxy server | `9877` | No |
-| `CLOUDCODE_GCP_PROJECT_ID` | Google Cloud Project ID for CloudCode API | - | **Yes** |
+| `CLOUDCODE_GCP_PROJECT_ID` | Google Cloud Project ID for Gemini Code Assist API | - | **Yes** |
 | `CLOUDCODE_OAUTH_CREDS` | OAuth credentials JSON content | - | **Yes** |
 | `SSE_BUFFER_SIZE` | Buffer size for SSE streaming pipeline | `3` | No |
 | `DEBUG_SSE` | Enable detailed SSE event logging | `false` | No |
@@ -67,14 +67,14 @@ The proxy expects OAuth credentials to be available. Set up your credentials:
 
 ### 1. URL Path Rewriting
 
-Transforms standard Gemini API paths to CloudCode's internal format:
+Transforms standard Gemini API paths to Gemini Code Assist's internal format:
 
 - **From:** `/v1beta/models/gemini-1.5-pro:generateContent`
 - **To:** `/v1internal:generateContent`
 
 ### 2. Model Normalization
 
-Automatically converts model names to CloudCode's supported models:
+Automatically converts model names to Gemini Code Assist's supported models:
 
 - Any model containing "pro" → `gemini-2.5-pro`
 - Any model containing "flash" → `gemini-2.5-flash`
@@ -97,7 +97,7 @@ Examples:
 }
 ```
 
-**Transformed CloudCode Request:**
+**Transformed Code Assist Request:**
 ```json
 {
   "model": "gemini-2.5-pro",
@@ -121,7 +121,7 @@ Examples:
 }
 ```
 
-**Transformed CloudCode Request:**
+**Transformed Code Assist Request:**
 ```json
 {
   "request": {
@@ -135,9 +135,9 @@ Examples:
 
 ### 4. Response Transformation
 
-CloudCode wraps responses in a `response` field which the proxy automatically unwraps:
+Code Assist wraps responses in a `response` field which the proxy automatically unwraps:
 
-**CloudCode Response:**
+**Code Assist Response:**
 ```json
 {
   "response": {
@@ -199,24 +199,24 @@ curl -X POST 'http://localhost:9877/v1beta/models/gemini-1.5-pro:countTokens?key
 
 The proxy uses a goroutine pipeline for efficient SSE streaming:
 
-1. **Reader goroutine**: Reads from CloudCode response
-2. **Transformer goroutine**: Transforms CloudCode SSE to Gemini format
+1. **Reader goroutine**: Reads from Code Assist response
+2. **Transformer goroutine**: Transforms Code Assist SSE to Gemini format
 3. **Writer goroutine**: Writes to client with immediate flushing
 
 Tune the pipeline buffer size with `SSE_BUFFER_SIZE` (default: 3).
 
 ### Connection Pooling
 
-The proxy maintains persistent HTTP/2 connections to CloudCode:
+The proxy maintains persistent HTTP/2 connections to Code Assist:
 - Max idle connections: 100
 - Max idle connections per host: 10
 - Idle connection timeout: 90 seconds
 
 ## Troubleshooting
 
-### CloudCode Response Delays
+### Code Assist Response Delays
 
-CloudCode can take 7+ seconds to start streaming responses. This is normal behavior from the CloudCode API, not a proxy issue. Enable debug logging to see detailed timing:
+Code Assist can take 7+ seconds to start streaming responses. This is normal behavior from the Code Assist API, not a proxy issue. Enable debug logging to see detailed timing:
 
 ```bash
 export DEBUG_SSE=true
@@ -227,7 +227,7 @@ export DEBUG_SSE=true
 If you receive 401 errors:
 1. Check that `CLOUDCODE_OAUTH_CREDS` contains valid OAuth tokens
 2. Refresh your OAuth tokens if they've expired
-3. Ensure your GCP project has CloudCode API access
+3. Ensure your GCP project has Gemini Code Assist API access
 
 ### Debugging
 
@@ -238,7 +238,7 @@ export DEBUG_SSE=true  # Show SSE event timing
 
 Check logs for:
 - Request transformation details
-- CloudCode response times
+- Code Assist response times
 - SSE event delivery timing
 
 ## TODO
