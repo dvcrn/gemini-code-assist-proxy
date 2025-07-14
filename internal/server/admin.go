@@ -1,11 +1,11 @@
 package server
 
 import (
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/dvcrn/gemini-cli-proxy/internal/env"
+	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
 )
 
 // adminMiddleware checks for valid admin API key from either
@@ -14,7 +14,7 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		adminKey, ok := env.Get("ADMIN_API_KEY")
 		if !ok || adminKey == "" {
-			log.Println("ADMIN_API_KEY environment variable not set")
+			logger.Get().Error().Msg("ADMIN_API_KEY environment variable not set")
 			http.Error(w, "Admin API not configured", http.StatusInternalServerError)
 			return
 		}
@@ -27,7 +27,7 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			// Expect "Bearer <token>" format, case-insensitive
 			parts := strings.Split(authHeader, " ")
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				log.Printf("Invalid Authorization header format for admin endpoint: %s %s from %s",
+				logger.Get().Warn().Msgf("Invalid Authorization header format for admin endpoint: %s %s from %s",
 					r.Method, r.RequestURI, r.RemoteAddr)
 				http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
 				return
@@ -37,7 +37,7 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			// Use the key from query parameter directly
 			providedToken = keyParam
 		} else {
-			log.Printf("Missing required Authorization header or key query parameter for admin endpoint: %s %s from %s",
+			logger.Get().Warn().Msgf("Missing required Authorization header or key query parameter for admin endpoint: %s %s from %s",
 				r.Method, r.RequestURI, r.RemoteAddr)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -45,14 +45,14 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		// Verify admin key
 		if providedToken != adminKey {
-			log.Printf("Invalid admin API key provided: %s %s from %s",
+			logger.Get().Warn().Msgf("Invalid admin API key provided: %s %s from %s",
 				r.Method, r.RequestURI, r.RemoteAddr)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		// Admin authorized
-		log.Printf("Admin request authorized: %s %s from %s",
+		logger.Get().Info().Msgf("Admin request authorized: %s %s from %s",
 			r.Method, r.RequestURI, r.RemoteAddr)
 
 		next(w, r)

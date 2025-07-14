@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dvcrn/gemini-cli-proxy/internal/env"
+	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
 )
 
 // FileProvider implements CredentialsProvider using file-based storage
@@ -90,7 +90,7 @@ func (f *FileProvider) GetCredentials() (*OAuthCredentials, error) {
 func (f *FileProvider) SaveCredentials(creds *OAuthCredentials) error {
 	if f.filePath == "" {
 		// When using environment variable, we can't save
-		log.Println("Cannot save credentials when using CLOUDCODE_OAUTH_CREDS environment variable")
+		logger.Get().Warn().Msg("Cannot save credentials when using CLOUDCODE_OAUTH_CREDS environment variable")
 		return nil
 	}
 
@@ -109,9 +109,10 @@ func (f *FileProvider) SaveCredentials(creds *OAuthCredentials) error {
 	// Write to file
 	if err := ioutil.WriteFile(f.filePath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write credentials to %s: %w", f.filePath, err)
+		return fmt.Errorf("failed to write credentials to file: %w", err)
 	}
 
-	log.Printf("Saved credentials to %s", f.filePath)
+	logger.Get().Info().Msgf("Saved credentials to %s", f.filePath)
 	return nil
 }
 
@@ -173,11 +174,11 @@ func (f *FileProvider) RefreshToken() error {
 
 	// Save updated credentials
 	if err := f.SaveCredentials(creds); err != nil {
-		log.Printf("Warning: failed to save refreshed credentials: %v", err)
+		logger.Get().Warn().Err(err).Msg("failed to save refreshed credentials")
 		// Don't fail the refresh if save fails
 	}
 
-	log.Println("Successfully refreshed OAuth token")
+	logger.Get().Info().Msg("Successfully refreshed OAuth token")
 	return nil
 }
 

@@ -9,5 +9,8 @@ kv_namespaces = [
   { binding = "gemini_cli_proxy_kv", id = "2c683e97ff6a43c7b20edca20419bd1f" }
 ]
 
+[vars]
+ENV = "dev" # or prod
+
 [build]
 command = "just build-worker"

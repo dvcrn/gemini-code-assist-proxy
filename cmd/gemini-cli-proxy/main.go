@@ -1,10 +1,9 @@
 package main
 
 import (
-	"log"
-
 	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
 	"github.com/dvcrn/gemini-cli-proxy/internal/env"
+	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
 	"github.com/dvcrn/gemini-cli-proxy/internal/server"
 )
 
@@ -14,7 +13,7 @@ func main() {
 	// Create file provider
 	provider, err := credentials.NewFileProvider()
 	if err != nil {
-		log.Fatalf("Failed to create credentials provider: %v", err)
+		logger.Get().Fatal().Err(err).Msg("Failed to create credentials provider")
 	}
 
 	// Create server with provider
@@ -22,6 +21,6 @@ func main() {
 
 	// Start server
 	if err := srv.Start(":" + port); err != nil {
-		log.Fatal(err)
+		logger.Get().Fatal().Err(err).Msg("Failed to start server")
 	}
 }

@@ -3,9 +3,8 @@
 package main
 
 import (
-	"log"
-
 	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
+	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
 	"github.com/dvcrn/gemini-cli-proxy/internal/server"
 	"github.com/syumai/workers"
 )
@@ -16,7 +15,7 @@ func init() {
 	// Create Cloudflare KV provider for Workers environment
 	provider, err := credentials.NewCloudflareKVProvider()
 	if err != nil {
-		log.Printf("Failed to create credentials provider: %v", err)
+		logger.Get().Error().Err(err).Msg("Failed to create credentials provider")
 		// Continue anyway, authentication will fail
 	}
 
@@ -25,8 +24,8 @@ func init() {
 
 	// Load OAuth credentials on startup
 	if err := srv.LoadCredentials(); err != nil {
-		log.Printf("Failed to load OAuth credentials: %v", err)
-		log.Println("The proxy will run but authentication will fail without valid credentials")
+		logger.Get().Error().Err(err).Msg("Failed to load OAuth credentials")
+		logger.Get().Warn().Msg("The proxy will run but authentication will fail without valid credentials")
 	}
 }
 

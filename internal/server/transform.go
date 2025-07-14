@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/dvcrn/gemini-cli-proxy/internal/env"
+	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
 )
 
 // CloudCodeRequest represents the structure of the request expected by the Cloud Code API.
@@ -127,20 +127,20 @@ func unwrapCloudCodeResponse(cloudCodeResp map[string]interface{}) map[string]in
 
 // TransformRequest rewrites the incoming standard Gemini request to the Cloud Code format (server method).
 func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, error) {
-	log.Println("--- Start Request Transformation ---")
-	defer log.Println("--- End Request Transformation ---")
+	logger.Get().Debug().Msg("--- Start Request Transformation ---")
+	defer logger.Get().Debug().Msg("--- End Request Transformation ---")
 
 	// Log truncated request body for debugging
 	bodyPreview := string(body)
 	if len(bodyPreview) > 200 {
 		bodyPreview = bodyPreview[:200] + "..."
 	}
-	log.Printf("Original request body: %s", bodyPreview)
+	logger.Get().Debug().Str("body", bodyPreview).Msg("Original request body")
 
 	// Parse the request body as a generic map to handle all fields
 	var requestData map[string]interface{}
 	if err := json.Unmarshal(body, &requestData); err != nil {
-		log.Printf("Error unmarshaling JSON: %v", err)
+		logger.Get().Error().Err(err).Msg("Error unmarshaling JSON")
 		return nil, err
 	}
 
@@ -148,7 +148,7 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	model, action := parseGeminiPath(r.URL.Path)
 
 	if model == "" || action == "" {
-		log.Printf("Path '%s' did not match expected format.", r.URL.Path)
+		logger.Get().Debug().Str("path", r.URL.Path).Msg("Path did not match expected format")
 		// If the path doesn't match, we can't transform it.
 		// We'll just forward it as is.
 		proxyReq, err := http.NewRequest(r.Method, r.URL.String(), bytes.NewReader(body))
@@ -158,12 +158,12 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 		proxyReq.Header = r.Header
 		return proxyReq, nil
 	}
-	log.Printf("Extracted Model: %s, Action: %s", model, action)
+	logger.Get().Debug().Str("model", model).Str("action", action).Msg("Extracted Model and Action")
 
 	// Normalize model name
 	normalizedModel := normalizeModelName(model)
 	if normalizedModel != model {
-		log.Printf("Normalized model from %s to %s", model, normalizedModel)
+		logger.Get().Debug().Str("original", model).Str("normalized", normalizedModel).Msg("Normalized model")
 		model = normalizedModel
 	}
 
@@ -173,11 +173,11 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 		var err error
 		projectID, err = s.DiscoverProjectID()
 		if err != nil {
-			log.Printf("Error discovering project ID: %v", err)
+			logger.Get().Error().Err(err).Msg("Error discovering project ID")
 			return nil, err
 		}
 	} else {
-		log.Printf("Using project ID from CLOUDCODE_GCP_PROJECT_ID environment variable: %s", projectID)
+		logger.Get().Debug().Str("project_id", projectID).Msg("Using project ID from CLOUDCODE_GCP_PROJECT_ID environment variable")
 	}
 
 	// Build the appropriate request body based on the action
@@ -186,13 +186,13 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	if action == "countTokens" {
 		newBody, err = buildCountTokensRequest(requestData, model)
 		if err != nil {
-			log.Printf("Error building countTokens request: %v", err)
+			logger.Get().Error().Err(err).Msg("Error building countTokens request")
 			return nil, err
 		}
 	} else {
 		newBody, err = buildCloudCodeRequest(requestData, model, projectID)
 		if err != nil {
-			log.Printf("Error building CloudCode request: %v", err)
+			logger.Get().Error().Err(err).Msg("Error building CloudCode request")
 			return nil, err
 		}
 	}
@@ -201,7 +201,7 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	if len(transformedPreview) > 200 {
 		transformedPreview = transformedPreview[:200] + "..."
 	}
-	log.Printf("Transformed request body: %s", transformedPreview)
+	logger.Get().Debug().Str("body", transformedPreview).Msg("Transformed request body")
 
 	// Construct the new URL for the Cloud Code API.
 	newPath := "/v1internal:" + action
@@ -209,7 +209,7 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	// Preserve query parameters
 	targetURL, err := url.Parse("https://cloudcode-pa.googleapis.com" + newPath)
 	if err != nil {
-		log.Printf("Error parsing target URL: %v", err)
+		logger.Get().Error().Err(err).Msg("Error parsing target URL")
 		return nil, err
 	}
 
@@ -217,12 +217,12 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	processedQuery, hasAPIKey := processQueryParams(r.URL.RawQuery)
 	targetURL.RawQuery = processedQuery
 
-	log.Printf("Target URL: %s", targetURL.String())
+	logger.Get().Debug().Str("url", targetURL.String()).Msg("Target URL")
 
 	// Create the proxy request with the updated URL
 	proxyReq, err := http.NewRequest(r.Method, targetURL.String(), bytes.NewReader(newBody))
 	if err != nil {
-		log.Printf("Error creating new request: %v", err)
+		logger.Get().Error().Err(err).Msg("Error creating new request")
 		return nil, err
 	}
 
@@ -236,7 +236,7 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 		// Also skip any potential API key headers
 		lowerHeader := strings.ToLower(h)
 		if strings.Contains(lowerHeader, "api-key") || lowerHeader == "x-goog-api-key" {
-			log.Printf("Skipping potential API key header: %s", h)
+			logger.Get().Debug().Str("header", h).Msg("Skipping potential API key header")
 			continue
 		}
 		proxyReq.Header[h] = val
@@ -252,13 +252,13 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 		if s.oauthCreds != nil && s.oauthCreds.AccessToken != "" {
 			proxyReq.Header.Set("Authorization", "Bearer "+s.oauthCreds.AccessToken)
 		} else {
-			log.Printf("Warning: No OAuth credentials loaded and no client authorization provided")
+			logger.Get().Warn().Msg("No OAuth credentials loaded and no client authorization provided")
 		}
 	}
 
 	// Log whether API key was in the URL (for debugging)
 	if hasAPIKey {
-		log.Printf("API Key provided in query params, removed it for CloudCode request")
+		logger.Get().Debug().Msg("API Key provided in query params, removed it for CloudCode request")
 	}
 
 	// Set required headers for CloudCode
@@ -287,7 +287,7 @@ func TransformSSELine(line string) string {
 	if err := json.Unmarshal([]byte(jsonData), &cloudCodeResp); err != nil {
 		// Only log if debug mode is enabled
 		if env.GetOrDefault("DEBUG_SSE", "false") == "true" {
-			log.Printf("Error parsing SSE JSON: %v", err)
+			logger.Get().Debug().Err(err).Msg("Error parsing SSE JSON")
 		}
 		return line // Return unchanged if we can't parse
 	}
@@ -300,7 +300,7 @@ func TransformSSELine(line string) string {
 	if err != nil {
 		// Only log if debug mode is enabled
 		if env.GetOrDefault("DEBUG_SSE", "false") == "true" {
-			log.Printf("Error marshaling transformed response: %v", err)
+			logger.Get().Debug().Err(err).Msg("Error marshaling transformed response")
 		}
 		return line
 	}
@@ -312,7 +312,7 @@ func TransformSSELine(line string) string {
 func TransformJSONResponse(body []byte) []byte {
 	var cloudCodeResp map[string]interface{}
 	if err := json.Unmarshal(body, &cloudCodeResp); err != nil {
-		log.Printf("Error parsing JSON response: %v", err)
+		logger.Get().Error().Err(err).Msg("Error parsing JSON response")
 		return body // Return unchanged if we can't parse
 	}
 
@@ -322,7 +322,7 @@ func TransformJSONResponse(body []byte) []byte {
 	// Convert back to JSON
 	transformedJSON, err := json.Marshal(geminiResp)
 	if err != nil {
-		log.Printf("Error marshaling transformed response: %v", err)
+		logger.Get().Error().Err(err).Msg("Error marshaling transformed response")
 		return body
 	}
 

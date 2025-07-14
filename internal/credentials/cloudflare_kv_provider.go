@@ -7,11 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
 
 	"github.com/syumai/workers/cloudflare/fetch"
 	"github.com/syumai/workers/cloudflare/kv"
@@ -72,7 +73,7 @@ func (c *CloudflareKVProvider) SaveCredentials(creds *OAuthCredentials) error {
 		return fmt.Errorf("failed to store credentials in KV: %w", err)
 	}
 
-	log.Println("Saved credentials to Cloudflare KV")
+	logger.Get().Info().Msg("Saved credentials to Cloudflare KV")
 	return nil
 }
 
@@ -135,11 +136,11 @@ func (c *CloudflareKVProvider) RefreshToken() error {
 
 	// Save updated credentials
 	if err := c.SaveCredentials(creds); err != nil {
-		log.Printf("Warning: failed to save refreshed credentials: %v", err)
+		logger.Get().Warn().Err(err).Msg("failed to save refreshed credentials")
 		// Don't fail the refresh if save fails
 	}
 
-	log.Println("Successfully refreshed OAuth token")
+	logger.Get().Info().Msg("Successfully refreshed OAuth token")
 	return nil
 }
 

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
 	"github.com/dvcrn/gemini-cli-proxy/internal/env"
+	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
 )
 
 // Server represents the proxy server with its dependencies
@@ -73,7 +73,7 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 		for scanner.Scan() {
 			line := scanner.Text()
 			if firstLine && debugSSE {
-				log.Printf("First SSE line received after %v", time.Since(startTime))
+				logger.Get().Debug().Dur("duration", time.Since(startTime)).Msg("First SSE line received")
 				firstLine = false
 			}
 			select {
@@ -84,7 +84,7 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 		}
 
 		if err := scanner.Err(); err != nil {
-			log.Printf("Error reading stream: %v", err)
+			logger.Get().Error().Err(err).Msg("Error reading stream")
 		}
 	}()
 
@@ -119,14 +119,14 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 
 	for msg := range transformedLines {
 		if _, err := fmt.Fprintf(w, "%s\n", msg.line); err != nil {
-			log.Printf("Error writing to client: %v", err)
+			logger.Get().Error().Err(err).Msg("Error writing to client")
 			return
 		}
 
 		// Log SSE events in debug mode
 		if debugSSE && msg.isDataLine {
 			eventCount++
-			log.Printf("SSE event #%d sent to client after %v", eventCount, time.Since(startTime))
+			logger.Get().Debug().Msgf("SSE event #%d sent to client after %v", eventCount, time.Since(startTime))
 		}
 
 		// Flush after data lines or empty lines (if flushing is available)
@@ -136,18 +136,13 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 	}
 
 	if debugSSE {
-		log.Printf("SSE streaming completed: %d events in %v", eventCount, time.Since(startTime))
+		logger.Get().Debug().Int("event_count", eventCount).Dur("duration", time.Since(startTime)).Msg("SSE streaming completed")
 	}
 }
 
 // HandleProxyRequest handles incoming proxy requests for the server instance
 func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Incoming request: %s %s%s", r.Method, r.URL.Path, func() string {
-		if r.URL.RawQuery != "" {
-			return "?" + r.URL.RawQuery
-		}
-		return ""
-	}())
+	logger.Get().Info().Str("method", r.Method).Str("path", r.URL.Path).Str("query", r.URL.RawQuery).Msg("Incoming request")
 
 	// Read the request body once to enable retry after OAuth refresh
 	body, err := ioutil.ReadAll(r.Body)
@@ -165,7 +160,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Log when we're about to send the request
 	startTime := time.Now()
-	log.Printf("Sending request to CloudCode at %s", startTime.Format("15:04:05.000"))
+	logger.Get().Debug().Time("start_time", startTime).Msg("Sending request to CloudCode")
 
 	resp, err := s.httpClient.Do(proxyReq)
 	if err != nil {
@@ -175,7 +170,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Check for 401 Unauthorized and attempt a token refresh
 	if resp.StatusCode == http.StatusUnauthorized {
-		log.Println("Received 401 Unauthorized, attempting to refresh token...")
+		logger.Get().Info().Msg("Received 401 Unauthorized, attempting to refresh token...")
 		resp.Body.Close() // Close the first response body
 
 		if err := s.provider.RefreshToken(); err != nil {
@@ -198,7 +193,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Println("Retrying request with new token...")
+		logger.Get().Info().Msg("Retrying request with new token...")
 		resp, err = s.httpClient.Do(newProxyReq)
 		if err != nil {
 			http.Error(w, "Error forwarding request after refresh: "+err.Error(), http.StatusBadGateway)
@@ -208,7 +203,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	responseTime := time.Since(startTime)
-	log.Printf("Upstream response status: %s (took %v)", resp.Status, responseTime)
+	logger.Get().Info().Str("status", resp.Status).Dur("response_time", responseTime).Msg("Upstream response")
 
 	// Copy headers from the upstream response to the original response writer
 	for h, val := range resp.Header {
@@ -225,7 +220,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	if isStreaming {
 		// Handle SSE streaming response
-		log.Println("Handling streaming response")
+		logger.Get().Debug().Msg("Handling streaming response")
 
 		// Set headers for SSE
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -236,7 +231,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		// Check if flushing is available (graceful fallback if not)
 		flusher, canFlush := w.(http.Flusher)
 		if !canFlush {
-			log.Println("ResponseWriter does not support flushing - streaming may be buffered")
+			logger.Get().Warn().Msg("ResponseWriter does not support flushing - streaming may be buffered")
 		}
 
 		// Use goroutine pipeline for better streaming performance
@@ -248,7 +243,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		// Read the entire response
 		respBody, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			log.Printf("Error reading response body: %v", err)
+			logger.Get().Error().Err(err).Msg("Error reading response body")
 			return
 		}
 
@@ -257,18 +252,18 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		if len(preview) > 200 {
 			preview = preview[:200] + "..."
 		}
-		log.Printf("Response preview: %s", preview)
+		logger.Get().Debug().Str("preview", preview).Msg("Response preview")
 
 		// For non-streaming JSON responses, we might need to transform them too
 		if resp.StatusCode == http.StatusOK && strings.Contains(contentType, "application/json") {
 			transformedBody := TransformJSONResponse(respBody)
 			if _, err := w.Write(transformedBody); err != nil {
-				log.Printf("Error writing response body: %v", err)
+				logger.Get().Error().Err(err).Msg("Error writing response body")
 			}
 		} else {
 			// Write response as-is for errors and other content types
 			if _, err := w.Write(respBody); err != nil {
-				log.Printf("Error writing response body: %v", err)
+				logger.Get().Error().Err(err).Msg("Error writing response body")
 			}
 		}
 	}
@@ -278,11 +273,11 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Start(addr string) error {
 	// Load OAuth credentials on startup
 	if err := s.LoadCredentials(); err != nil {
-		log.Printf("Failed to load OAuth credentials: %v", err)
-		log.Println("The proxy will run but authentication will fail without valid credentials")
+		logger.Get().Error().Err(err).Msg("Failed to load OAuth credentials")
+		logger.Get().Warn().Msg("The proxy will run but authentication will fail without valid credentials")
 	}
 
-	log.Printf("Starting proxy server on %s", addr)
+	logger.Get().Info().Msgf("Starting proxy server on %s", addr)
 	return http.ListenAndServe(addr, s.mux)
 }
 
@@ -299,9 +294,9 @@ func (s *Server) LoadCredentials() error {
 	if creds.ExpiryDate > 0 {
 		expiryTime := time.Unix(creds.ExpiryDate/1000, 0)
 		if time.Now().After(expiryTime.Add(-5 * time.Minute)) {
-			log.Println("OAuth token is expired or expiring soon, attempting to refresh...")
+			logger.Get().Info().Msg("OAuth token is expired or expiring soon, attempting to refresh...")
 			if err := s.provider.RefreshToken(); err != nil {
-				log.Printf("Failed to refresh OAuth token: %v", err)
+				logger.Get().Error().Err(err).Msg("Failed to refresh OAuth token")
 				// Continue with the expired token, the API call might still work or will fail with 401
 			} else {
 				// Reload credentials after refresh
@@ -313,11 +308,11 @@ func (s *Server) LoadCredentials() error {
 			}
 		} else {
 			timeUntilExpiry := time.Until(expiryTime)
-			log.Printf("OAuth token valid for %v", timeUntilExpiry.Round(time.Second))
+			logger.Get().Info().Dur("valid_for", timeUntilExpiry.Round(time.Second)).Msg("OAuth token valid")
 		}
 	}
 
-	log.Printf("Loaded OAuth credentials from %s", s.provider.Name())
+	logger.Get().Info().Str("provider", s.provider.Name()).Msg("Loaded OAuth credentials")
 	return nil
 }
 
@@ -351,7 +346,7 @@ func (s *Server) DiscoverProjectID() (string, error) {
 
 	if companionProject, ok := loadResponse["cloudaicompanionProject"].(string); ok && companionProject != "" {
 		s.projectID = companionProject
-		log.Printf("Discovered project ID: %s", s.projectID)
+		logger.Get().Info().Str("project_id", s.projectID).Msg("Discovered project ID")
 		return s.projectID, nil
 	}
 
@@ -389,7 +384,7 @@ func (s *Server) DiscoverProjectID() (string, error) {
 				if companionProject, ok := response["cloudaicompanionProject"].(map[string]interface{}); ok {
 					if id, ok := companionProject["id"].(string); ok && id != "" {
 						s.projectID = id
-						log.Printf("Discovered project ID after onboarding: %s", s.projectID)
+						logger.Get().Info().Str("project_id", s.projectID).Msg("Discovered project ID after onboarding")
 						return s.projectID, nil
 					}
 				}
@@ -464,14 +459,14 @@ func (s *Server) credentialsHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse request body - using the exact same format as oauth_creds.json
 	var creds credentials.OAuthCredentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		log.Printf("Failed to decode credentials request: %v", err)
+		logger.Get().Error().Err(err).Msg("Failed to decode credentials request")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// Save credentials
 	if err := s.provider.SaveCredentials(&creds); err != nil {
-		log.Printf("Failed to save credentials: %v", err)
+		logger.Get().Error().Err(err).Msg("Failed to save credentials")
 		http.Error(w, "Failed to save credentials", http.StatusInternalServerError)
 		return
 	}
