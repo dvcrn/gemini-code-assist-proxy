@@ -14,8 +14,8 @@ import (
 var srv *server.Server
 
 func init() {
-	// Create file provider
-	provider, err := credentials.NewFileProvider()
+	// Create Cloudflare KV provider for Workers environment
+	provider, err := credentials.NewCloudflareKVProvider()
 	if err != nil {
 		log.Printf("Failed to create credentials provider: %v", err)
 		// Continue anyway, authentication will fail
