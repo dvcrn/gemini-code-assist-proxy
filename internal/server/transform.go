@@ -87,6 +87,28 @@ func buildCloudCodeRequest(requestData map[string]interface{}, model, projectID 
 	return json.Marshal(cloudCodeReq)
 }
 
+// processQueryParams processes query parameters, extracting and removing API key if present
+// Returns the processed query string and whether an API key was found
+func processQueryParams(originalQuery string) (processedQuery string, hasAPIKey bool) {
+	if originalQuery == "" {
+		return "", false
+	}
+	
+	values, err := url.ParseQuery(originalQuery)
+	if err != nil {
+		// If we can't parse, return original
+		return originalQuery, false
+	}
+	
+	apiKey := values.Get("key")
+	if apiKey != "" {
+		values.Del("key")
+		return values.Encode(), true
+	}
+	
+	return originalQuery, false
+}
+
 // LoadOAuthCredentials loads OAuth credentials from ~/.gemini/oauth_creds.json
 func LoadOAuthCredentials() error {
 	homeDir, err := os.UserHomeDir()
@@ -209,18 +231,12 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 		return nil, err
 	}
 
-	// Copy query parameters from original request (will be modified below if API key present)
-	targetURL.RawQuery = r.URL.RawQuery
-
-	// Handle authorization transformation first
-	// Standard Gemini uses API key in query params, CloudCode uses Bearer token
-	queryValues := targetURL.Query()
-	apiKey := queryValues.Get("key")
-	if apiKey != "" {
-		log.Printf("API Key provided in query params, removing it and using OAuth token")
-		// Remove the key from query params since CloudCode doesn't use it
-		queryValues.Del("key")
-		targetURL.RawQuery = queryValues.Encode()
+	// Process query parameters and check for API key
+	processedQuery, hasAPIKey := processQueryParams(r.URL.RawQuery)
+	targetURL.RawQuery = processedQuery
+	
+	if hasAPIKey {
+		log.Printf("API Key provided in query params, removed it for CloudCode request")
 	}
 
 	log.Printf("Target URL: %s", targetURL.String())
@@ -243,7 +259,7 @@ func TransformRequest(r *http.Request) (*http.Request, error) {
 	}
 
 	// Set authorization based on whether API key was provided
-	if apiKey != "" {
+	if hasAPIKey {
 		// Use OAuth token from loaded credentials
 		if oauthCreds != nil && oauthCreds.AccessToken != "" {
 			proxyReq.Header.Set("Authorization", "Bearer "+oauthCreds.AccessToken)

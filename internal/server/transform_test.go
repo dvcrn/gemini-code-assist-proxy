@@ -321,3 +321,61 @@ func TestBuildCloudCodeRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessQueryParams(t *testing.T) {
+	tests := []struct {
+		name               string
+		originalQuery      string
+		expectedQuery      string
+		expectedHasAPIKey  bool
+	}{
+		{
+			name:               "query with API key",
+			originalQuery:      "key=AIzaSyAbcdef123456&alt=sse",
+			expectedQuery:      "alt=sse",
+			expectedHasAPIKey:  true,
+		},
+		{
+			name:               "query with only API key",
+			originalQuery:      "key=AIzaSyAbcdef123456",
+			expectedQuery:      "",
+			expectedHasAPIKey:  true,
+		},
+		{
+			name:               "query without API key",
+			originalQuery:      "alt=sse&format=json",
+			expectedQuery:      "alt=sse&format=json",
+			expectedHasAPIKey:  false,
+		},
+		{
+			name:               "empty query",
+			originalQuery:      "",
+			expectedQuery:      "",
+			expectedHasAPIKey:  false,
+		},
+		{
+			name:               "query with multiple params and API key in middle",
+			originalQuery:      "alt=sse&key=AIzaSyAbcdef123456&format=json",
+			expectedQuery:      "alt=sse&format=json",
+			expectedHasAPIKey:  true,
+		},
+		{
+			name:               "malformed query",
+			originalQuery:      "invalid%query%params",
+			expectedQuery:      "invalid%query%params",
+			expectedHasAPIKey:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			processedQuery, hasAPIKey := processQueryParams(tt.originalQuery)
+			if processedQuery != tt.expectedQuery {
+				t.Errorf("processQueryParams(%q) query = %q, want %q", tt.originalQuery, processedQuery, tt.expectedQuery)
+			}
+			if hasAPIKey != tt.expectedHasAPIKey {
+				t.Errorf("processQueryParams(%q) hasAPIKey = %v, want %v", tt.originalQuery, hasAPIKey, tt.expectedHasAPIKey)
+			}
+		})
+	}
+}
