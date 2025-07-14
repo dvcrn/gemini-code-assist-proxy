@@ -6,3 +6,4 @@ node_modules
 *.folder
 *.har
 *.proxymanlogv2
+build/

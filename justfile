@@ -18,8 +18,9 @@ format:
 
 # Build for Cloudflare Workers
 build-worker:
+    go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go
     GOOS=js GOARCH=wasm go build -o ./build/app.wasm cmd/gemini-proxy-worker/main.go
 
 # Run wrangler dev
-wrangler-dev: 
+wrangler-dev:
     bunx wrangler dev
