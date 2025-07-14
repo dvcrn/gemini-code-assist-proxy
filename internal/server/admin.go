@@ -9,7 +9,7 @@ import (
 )
 
 // adminMiddleware checks for valid admin API key from either
-// 'Authorization: Bearer <key>' or 'X-API-Key: <key>' headers.
+// 'Authorization: Bearer <key>', 'X-Goog-Api-Key: <key>' headers, or 'key' query parameter.
 func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		adminKey, ok := env.Get("ADMIN_API_KEY")
@@ -21,6 +21,7 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		var providedToken string
 		authHeader := r.Header.Get("Authorization")
+		googApiKey := r.Header.Get("X-Goog-Api-Key")
 		keyParam := r.URL.Query().Get("key")
 
 		if authHeader != "" {
@@ -33,11 +34,14 @@ func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 			providedToken = parts[1]
+		} else if googApiKey != "" {
+			// Use X-Goog-Api-Key header directly
+			providedToken = googApiKey
 		} else if keyParam != "" {
 			// Use the key from query parameter directly
 			providedToken = keyParam
 		} else {
-			logger.Get().Warn().Msgf("Missing required Authorization header or key query parameter for admin endpoint: %s %s from %s",
+			logger.Get().Warn().Msgf("Missing required Authorization header, X-Goog-Api-Key header, or key query parameter for admin endpoint: %s %s from %s",
 				r.Method, r.RequestURI, r.RemoteAddr)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
