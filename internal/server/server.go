@@ -61,6 +61,10 @@ func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE boo
 	for scanner.Scan() {
 		line := scanner.Text()
 
+		if debugSSE {
+			logger.Get().Debug().Str("raw_line", line).Msg("Raw SSE line received from upstream")
+		}
+
 		if firstLine && debugSSE {
 			logger.Get().Debug().
 				Dur("time_to_first_data", time.Since(startTime)).
@@ -72,6 +76,9 @@ func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE boo
 		if strings.HasPrefix(line, "data: ") {
 			transformed := TransformSSELine(line)
 			if transformed != "" {
+				if debugSSE {
+					logger.Get().Debug().Str("transformed_line", transformed).Msg("Writing transformed data to client")
+				}
 				// Write transformed line immediately
 				if _, err := fmt.Fprintf(w, "%s\n\n", transformed); err != nil {
 					logger.Get().Error().Err(err).Msg("Error writing to client")
@@ -86,17 +93,17 @@ func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE boo
 						Msg("SSE event written directly to client")
 				}
 			}
-		} else {
-			// Write non-data lines as-is
+		} else if line != "" {
+			if debugSSE {
+				logger.Get().Debug().Str("passthrough_line", line).Msg("Writing non-data line to client")
+			}
+			// Write non-data lines as-is, but only if they are not empty
 			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
 				logger.Get().Error().Err(err).Msg("Error writing to client")
 				return
 			}
 		}
 	}
-
-	// After the loop, send a final newline to properly terminate the SSE stream
-	fmt.Fprintln(w)
 
 	if err := scanner.Err(); err != nil {
 		logger.Get().Error().Err(err).Msg("Error reading stream")
@@ -448,7 +455,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Set headers for SSE
-		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(resp.StatusCode)
