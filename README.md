@@ -41,7 +41,7 @@ For production deployment on Cloudflare Workers:
    This will output a namespace ID. Add it to your `wrangler.toml`:
    ```toml
    kv_namespaces = [
-     { binding = "gemini_cli_proxy_kv", id = "YOUR_NAMESPACE_ID_HERE" }
+     { binding = "gemini_code_assist_proxy_kv", id = "YOUR_NAMESPACE_ID_HERE" }
    ]
    ```
 

@@ -28,7 +28,7 @@ type CloudflareKVProvider struct {
 func NewCloudflareKVProvider() (*CloudflareKVProvider, error) {
 	// In Cloudflare Workers, KV namespaces are accessed via bindings
 	// The binding name is configured in wrangler.toml
-	kvStore, err := kv.NewNamespace("gemini_cli_proxy_kv")
+	kvStore, err := kv.NewNamespace("gemini_code_assist_proxy_kv")
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize KV namespace: %w", err)
 	}
