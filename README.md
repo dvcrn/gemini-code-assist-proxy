@@ -90,6 +90,7 @@ The proxy supports two main authentication methods, with the following order of 
     *   **Default Location**:
         *   `~/.gemini/oauth_creds.json` (the default Gemini CLI location)
     *   **`CLOUDCODE_OAUTH_CREDS`**: The raw JSON content of your credentials.
+3. Set an `ADMIN_API_KEY` environment variable and set your IDE or editor to pass it along as Gemini API Key
 
 ### Environment Variables
 
