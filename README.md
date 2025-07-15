@@ -1,6 +1,8 @@
-# Gemini CLI API Proxy
+# Gemini Code Assist Proxy
 
 A Go proxy server that transforms standard Gemini API requests into the format expected by Google's Gemini Code Assist API (`cloudcode-pa.googleapis.com`), enabling standard Gemini clients to work with the Code Assist backend.
+
+To run locally, or to deploy to Cloudflare Workers
 
 ## What it does
 
