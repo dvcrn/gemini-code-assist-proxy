@@ -43,8 +43,72 @@ type sseMessage struct {
 	isDataLine bool
 }
 
+// streamSSEResponseDirect handles SSE streaming for Workers environment without flushing
+func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE bool) {
+	startTime := time.Now()
+	eventCount := 0
+
+	if debugSSE {
+		logger.Get().Debug().
+			Time("stream_start", startTime).
+			Msg("Starting direct SSE stream processing (Workers mode)")
+	}
+
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	firstLine := true
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if firstLine && debugSSE {
+			logger.Get().Debug().
+				Dur("time_to_first_data", time.Since(startTime)).
+				Msg("First SSE line received from upstream")
+			firstLine = false
+		}
+
+		// Transform data lines
+		if strings.HasPrefix(line, "data: ") {
+			transformed := TransformSSELine(line)
+			if transformed != "" {
+				// Write transformed line immediately
+				if _, err := fmt.Fprintf(w, "%s\n\n", transformed); err != nil {
+					logger.Get().Error().Err(err).Msg("Error writing to client")
+					return
+				}
+
+				eventCount++
+				if debugSSE {
+					logger.Get().Debug().
+						Int("event_num", eventCount).
+						Dur("elapsed", time.Since(startTime)).
+						Msg("SSE event written directly to client")
+				}
+			}
+		} else {
+			// Write non-data lines as-is
+			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+				logger.Get().Error().Err(err).Msg("Error writing to client")
+				return
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logger.Get().Error().Err(err).Msg("Error reading stream")
+	}
+
+	if debugSSE {
+		logger.Get().Debug().
+			Int("total_events", eventCount).
+			Dur("total_duration", time.Since(startTime)).
+			Msg("Direct SSE streaming completed")
+	}
+}
+
 // streamSSEResponse handles SSE streaming with a goroutine pipeline for better performance
-func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flusher, canFlush bool) {
+func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flusher, canFlush bool, debugSSE bool) {
 	// Get buffer size from environment, default to 3
 	bufferSize := 3
 	if envSize, ok := env.Get("SSE_BUFFER_SIZE"); ok {
@@ -53,9 +117,19 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 		}
 	}
 
-	debugSSE := env.GetOrDefault("DEBUG_SSE", "false") == "true"
 	startTime := time.Now()
 	eventCount := 0
+	bufferedEventCount := 0
+	flushedEventCount := 0
+
+	// Log streaming setup
+	if debugSSE {
+		logger.Get().Debug().
+			Bool("can_flush", canFlush).
+			Int("buffer_size", bufferSize).
+			Time("stream_start", startTime).
+			Msg("Starting SSE stream processing")
+	}
 
 	// Create channels for the pipeline
 	rawLines := make(chan string, bufferSize)
@@ -72,12 +146,20 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 		firstLine := true
 		for scanner.Scan() {
 			line := scanner.Text()
+			receiveTime := time.Now()
 			if firstLine && debugSSE {
-				logger.Get().Debug().Dur("duration", time.Since(startTime)).Msg("First SSE line received")
+				logger.Get().Debug().
+					Dur("time_to_first_data", time.Since(startTime)).
+					Msg("First SSE line received from upstream")
 				firstLine = false
 			}
 			select {
 			case rawLines <- line:
+				if debugSSE && strings.HasPrefix(line, "data: ") {
+					logger.Get().Debug().
+						Dur("receive_latency", time.Since(receiveTime)).
+						Msg("SSE data line queued for processing")
+				}
 			case <-done:
 				return
 			}
@@ -117,50 +199,133 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 	// Main goroutine: Write to client
 	defer close(done)
 
+	firstDataWritten := false
+	// For Workers environment without flush support, we need to ensure each write
+	// is followed by a newline to trigger streaming
 	for msg := range transformedLines {
+		writeStart := time.Now()
+
+		// Write the line
 		if _, err := fmt.Fprintf(w, "%s\n", msg.line); err != nil {
 			logger.Get().Error().Err(err).Msg("Error writing to client")
 			return
 		}
 
+		// For Workers (no flush), add an extra newline after data lines to ensure streaming
+		if !canFlush && msg.isDataLine {
+			if _, err := fmt.Fprintf(w, "\n"); err != nil {
+				logger.Get().Error().Err(err).Msg("Error writing separator to client")
+				return
+			}
+		}
+
 		// Log SSE events in debug mode
 		if debugSSE && msg.isDataLine {
 			eventCount++
-			logger.Get().Debug().Msgf("SSE event #%d sent to client after %v", eventCount, time.Since(startTime))
+			if !firstDataWritten {
+				logger.Get().Debug().
+					Dur("time_to_first_write", time.Since(startTime)).
+					Msg("First SSE data written to client")
+				firstDataWritten = true
+			}
+			logger.Get().Debug().
+				Int("event_num", eventCount).
+				Dur("elapsed", time.Since(startTime)).
+				Dur("write_duration", time.Since(writeStart)).
+				Bool("workers_mode", !canFlush).
+				Msg("SSE event written to client")
 		}
 
 		// Flush after data lines or empty lines (if flushing is available)
 		if (msg.isDataLine || msg.line == "") && canFlush {
+			flushStart := time.Now()
 			flusher.Flush()
+			flushedEventCount++
+			if debugSSE {
+				logger.Get().Debug().
+					Dur("flush_duration", time.Since(flushStart)).
+					Msg("Flushed SSE data")
+			}
+		} else if !canFlush {
+			// In Workers, each write should stream automatically
+			bufferedEventCount++
+			if debugSSE && bufferedEventCount == 1 {
+				logger.Get().Info().
+					Msg("Workers environment detected - streaming without explicit flush")
+			}
 		}
 	}
 
 	if debugSSE {
-		logger.Get().Debug().Int("event_count", eventCount).Dur("duration", time.Since(startTime)).Msg("SSE streaming completed")
+		logger.Get().Debug().
+			Int("total_events", eventCount).
+			Int("flushed_events", flushedEventCount).
+			Int("buffered_events", bufferedEventCount).
+			Dur("total_duration", time.Since(startTime)).
+			Msg("SSE streaming completed")
 	}
 }
 
 // HandleProxyRequest handles incoming proxy requests for the server instance
 func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
-	logger.Get().Info().Str("method", r.Method).Str("path", r.URL.Path).Str("query", r.URL.RawQuery).Msg("Incoming request")
+	// Start timing the entire request
+	requestStartTime := time.Now()
+	logger.Get().Info().
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Str("query", r.URL.RawQuery).
+		Time("start_time", requestStartTime).
+		Msg("Incoming request")
 
 	// Read the request body once to enable retry after OAuth refresh
+	bodyReadStart := time.Now()
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Error reading request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	r.Body.Close()
+	bodyReadDuration := time.Since(bodyReadStart)
+	logger.Get().Debug().
+		Dur("body_read_duration", bodyReadDuration).
+		Int("body_size", len(body)).
+		Msg("Request body read complete")
 
+	// Transform the request
+	transformStart := time.Now()
 	proxyReq, err := s.TransformRequest(r, body)
 	if err != nil {
 		http.Error(w, "Error transforming request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	transformDuration := time.Since(transformStart)
+	logger.Get().Debug().
+		Dur("transform_duration", transformDuration).
+		Msg("Request transformation complete")
 
 	// Log when we're about to send the request
-	startTime := time.Now()
-	logger.Get().Debug().Time("start_time", startTime).Msg("Sending request to CloudCode")
+	apiCallStart := time.Now()
+
+	// Log request details
+	logger.Get().Debug().
+		Time("api_call_start", apiCallStart).
+		Dur("time_before_api_call", time.Since(requestStartTime)).
+		Str("url", proxyReq.URL.String()).
+		Str("method", proxyReq.Method).
+		Int64("content_length", proxyReq.ContentLength).
+		Msg("Sending request to CloudCode")
+
+	// Log request headers
+	for name, values := range proxyReq.Header {
+		for _, value := range values {
+			// Redact authorization header
+			if strings.ToLower(name) == "authorization" {
+				logger.Get().Debug().Str("header", name).Str("value", "REDACTED").Msg("Request header")
+			} else {
+				logger.Get().Debug().Str("header", name).Str("value", value).Msg("Request header")
+			}
+		}
+	}
 
 	resp, err := s.httpClient.Do(proxyReq)
 	if err != nil {
@@ -173,6 +338,8 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		logger.Get().Info().Msg("Received 401 Unauthorized, attempting to refresh token...")
 		resp.Body.Close() // Close the first response body
 
+		// Time the OAuth refresh process
+		oauthRefreshStart := time.Now()
 		if err := s.provider.RefreshToken(); err != nil {
 			http.Error(w, "Failed to refresh token: "+err.Error(), http.StatusUnauthorized)
 			return
@@ -185,30 +352,72 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.oauthCreds = creds
+		oauthRefreshDuration := time.Since(oauthRefreshStart)
+		logger.Get().Debug().
+			Dur("oauth_refresh_duration", oauthRefreshDuration).
+			Msg("OAuth token refresh complete")
 
 		// Re-create the request with the new token using the saved body
+		retransformStart := time.Now()
 		newProxyReq, err := s.TransformRequest(r, body)
 		if err != nil {
 			http.Error(w, "Error re-transforming request after refresh: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		retransformDuration := time.Since(retransformStart)
+		logger.Get().Debug().
+			Dur("retransform_duration", retransformDuration).
+			Msg("Request re-transformation complete")
 
 		logger.Get().Info().Msg("Retrying request with new token...")
+		retryStart := time.Now()
 		resp, err = s.httpClient.Do(newProxyReq)
 		if err != nil {
 			http.Error(w, "Error forwarding request after refresh: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+		// Update API call duration to include retry
+		apiCallDuration := time.Since(apiCallStart) + time.Since(retryStart)
+		logger.Get().Debug().
+			Dur("api_call_duration_with_retry", apiCallDuration).
+			Msg("API call complete (with retry)")
+	} else {
+		// Log API call duration for successful first attempt
+		apiCallDuration := time.Since(apiCallStart)
+		logger.Get().Debug().
+			Dur("api_call_duration", apiCallDuration).
+			Msg("API call complete")
 	}
 	defer resp.Body.Close()
 
-	responseTime := time.Since(startTime)
-	logger.Get().Info().Str("status", resp.Status).Dur("response_time", responseTime).Msg("Upstream response")
+	// Log the response with timing
+	logger.Get().Info().
+		Str("status", resp.Status).
+		Dur("time_to_first_byte", time.Since(requestStartTime)).
+		Dur("api_call_duration", time.Since(apiCallStart)).
+		Int64("content_length", resp.ContentLength).
+		Msg("Upstream response received")
+
+	// Log response headers
+	for name, values := range resp.Header {
+		for _, value := range values {
+			logger.Get().Debug().Str("header", name).Str("value", value).Msg("Response header")
+		}
+	}
 
 	// Copy headers from the upstream response to the original response writer
+	hasContentEncoding := resp.Header.Get("Content-Encoding") != ""
 	for h, val := range resp.Header {
 		// Skip transfer-encoding as we handle it ourselves
 		if h == "Transfer-Encoding" {
+			continue
+		}
+		// Skip Content-Length if response is compressed (to avoid FixedLengthStream errors)
+		if h == "Content-Length" && hasContentEncoding {
+			logger.Get().Debug().
+				Str("content_encoding", resp.Header.Get("Content-Encoding")).
+				Str("content_length", resp.Header.Get("Content-Length")).
+				Msg("Skipping Content-Length header for compressed response")
 			continue
 		}
 		w.Header()[h] = val
@@ -222,6 +431,19 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		// Handle SSE streaming response
 		logger.Get().Debug().Msg("Handling streaming response")
 
+		// Check for debug mode from environment or query parameter
+		debugSSE := env.GetOrDefault("DEBUG_SSE", "false") == "true"
+		if r.URL.Query().Get("debug_sse") == "true" {
+			debugSSE = true
+		}
+
+		if debugSSE {
+			logger.Get().Debug().
+				Bool("debug_sse_enabled", debugSSE).
+				Str("debug_source", "environment").
+				Msg("SSE debug mode enabled")
+		}
+
 		// Set headers for SSE
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -231,21 +453,29 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		// Check if flushing is available (graceful fallback if not)
 		flusher, canFlush := w.(http.Flusher)
 		if !canFlush {
-			logger.Get().Warn().Msg("ResponseWriter does not support flushing - streaming may be buffered")
+			logger.Get().Info().Msg("Workers environment detected - using direct streaming mode")
+			// For Workers, use a simpler direct streaming approach
+			streamSSEResponseDirect(resp.Body, w, debugSSE)
+		} else {
+			// Use goroutine pipeline for better streaming performance
+			streamSSEResponse(resp.Body, w, flusher, canFlush, debugSSE)
 		}
-
-		// Use goroutine pipeline for better streaming performance
-		streamSSEResponse(resp.Body, w, flusher, canFlush)
 	} else {
 		// Handle non-streaming response
 		w.WriteHeader(resp.StatusCode)
 
 		// Read the entire response
+		responseReadStart := time.Now()
 		respBody, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			logger.Get().Error().Err(err).Msg("Error reading response body")
 			return
 		}
+		responseReadDuration := time.Since(responseReadStart)
+		logger.Get().Debug().
+			Dur("response_read_duration", responseReadDuration).
+			Int("response_size", len(respBody)).
+			Msg("Response body read complete")
 
 		// Log response preview
 		preview := string(respBody)
@@ -255,6 +485,7 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		logger.Get().Debug().Str("preview", preview).Msg("Response preview")
 
 		// For non-streaming JSON responses, we might need to transform them too
+		responseProcessStart := time.Now()
 		if resp.StatusCode == http.StatusOK && strings.Contains(contentType, "application/json") {
 			transformedBody := TransformJSONResponse(respBody)
 			if _, err := w.Write(transformedBody); err != nil {
@@ -266,7 +497,18 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 				logger.Get().Error().Err(err).Msg("Error writing response body")
 			}
 		}
+		responseProcessDuration := time.Since(responseProcessStart)
+		logger.Get().Debug().
+			Dur("response_process_duration", responseProcessDuration).
+			Msg("Response processing complete")
 	}
+
+	// Log total request duration
+	totalDuration := time.Since(requestStartTime)
+	logger.Get().Info().
+		Dur("total_duration", totalDuration).
+		Str("path", r.URL.Path).
+		Msg("Request completed")
 }
 
 // Start launches the proxy server with the configured provider
@@ -318,7 +560,17 @@ func (s *Server) LoadCredentials() error {
 
 // DiscoverProjectID automatically discovers the GCP project ID using the Code Assist API.
 func (s *Server) DiscoverProjectID() (string, error) {
+	discoveryStartTime := time.Now()
+	logger.Get().Debug().Msg("Starting project ID discovery")
+	defer func() {
+		discoveryDuration := time.Since(discoveryStartTime)
+		logger.Get().Debug().
+			Dur("total_discovery_duration", discoveryDuration).
+			Msg("Project ID discovery completed")
+	}()
+
 	if s.projectID != "" {
+		logger.Get().Debug().Str("cached_project_id", s.projectID).Msg("Using cached project ID")
 		return s.projectID, nil
 	}
 
@@ -339,18 +591,30 @@ func (s *Server) DiscoverProjectID() (string, error) {
 		"metadata":                clientMetadata,
 	}
 
+	// Call loadCodeAssist endpoint
+	loadCallStart := time.Now()
 	loadResponse, err := s.callEndpoint("loadCodeAssist", loadRequest)
 	if err != nil {
 		return "", fmt.Errorf("failed to call loadCodeAssist: %w", err)
 	}
+	loadCallDuration := time.Since(loadCallStart)
+	logger.Get().Debug().
+		Dur("load_code_assist_duration", loadCallDuration).
+		Msg("loadCodeAssist call complete")
 
 	if companionProject, ok := loadResponse["cloudaicompanionProject"].(string); ok && companionProject != "" {
 		s.projectID = companionProject
-		logger.Get().Info().Str("project_id", s.projectID).Msg("Discovered project ID")
+		logger.Get().Info().
+			Str("project_id", s.projectID).
+			Dur("quick_discovery_duration", time.Since(discoveryStartTime)).
+			Msg("Discovered project ID (quick path)")
 		return s.projectID, nil
 	}
 
 	// Onboarding flow
+	logger.Get().Debug().Msg("Starting onboarding flow")
+	onboardingStart := time.Now()
+
 	var tierID string
 	if allowedTiers, ok := loadResponse["allowedTiers"].([]interface{}); ok {
 		for _, tier := range allowedTiers {
@@ -365,6 +629,7 @@ func (s *Server) DiscoverProjectID() (string, error) {
 	if tierID == "" {
 		tierID = "free-tier"
 	}
+	logger.Get().Debug().Str("tier_id", tierID).Msg("Selected tier for onboarding")
 
 	onboardRequest := map[string]interface{}{
 		"tierId":                  tierID,
@@ -372,19 +637,33 @@ func (s *Server) DiscoverProjectID() (string, error) {
 		"metadata":                clientMetadata,
 	}
 
+	// Initial onboarding call
+	onboardCallStart := time.Now()
 	lroResponse, err := s.callEndpoint("onboardUser", onboardRequest)
 	if err != nil {
 		return "", fmt.Errorf("failed to call onboardUser: %w", err)
 	}
+	onboardCallDuration := time.Since(onboardCallStart)
+	logger.Get().Debug().
+		Dur("onboard_user_duration", onboardCallDuration).
+		Msg("onboardUser call complete")
 
 	// Polling for completion
+	pollCount := 0
+	pollStart := time.Now()
 	for {
 		if done, ok := lroResponse["done"].(bool); ok && done {
 			if response, ok := lroResponse["response"].(map[string]interface{}); ok {
 				if companionProject, ok := response["cloudaicompanionProject"].(map[string]interface{}); ok {
 					if id, ok := companionProject["id"].(string); ok && id != "" {
 						s.projectID = id
-						logger.Get().Info().Str("project_id", s.projectID).Msg("Discovered project ID after onboarding")
+						onboardingDuration := time.Since(onboardingStart)
+						logger.Get().Info().
+							Str("project_id", s.projectID).
+							Dur("onboarding_duration", onboardingDuration).
+							Int("poll_count", pollCount).
+							Dur("polling_duration", time.Since(pollStart)).
+							Msg("Discovered project ID after onboarding")
 						return s.projectID, nil
 					}
 				}
@@ -392,15 +671,36 @@ func (s *Server) DiscoverProjectID() (string, error) {
 			return "", fmt.Errorf("onboarding completed but no project ID found")
 		}
 
+		pollCount++
+		logger.Get().Debug().
+			Int("poll_count", pollCount).
+			Dur("elapsed", time.Since(pollStart)).
+			Msg("Polling onboardUser status")
+
 		time.Sleep(2 * time.Second)
+
+		pollCallStart := time.Now()
 		lroResponse, err = s.callEndpoint("onboardUser", onboardRequest)
 		if err != nil {
 			return "", fmt.Errorf("failed to poll onboardUser: %w", err)
 		}
+		pollCallDuration := time.Since(pollCallStart)
+		logger.Get().Debug().
+			Dur("poll_call_duration", pollCallDuration).
+			Msg("Polling call complete")
 	}
 }
 
 func (s *Server) callEndpoint(method string, body interface{}) (map[string]interface{}, error) {
+	callStart := time.Now()
+	defer func() {
+		callDuration := time.Since(callStart)
+		logger.Get().Debug().
+			Str("method", method).
+			Dur("endpoint_call_duration", callDuration).
+			Msg("Code Assist API call complete")
+	}()
+
 	reqBody, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -414,16 +714,25 @@ func (s *Server) callEndpoint(method string, body interface{}) (map[string]inter
 	req.Header.Set("Authorization", "Bearer "+s.oauthCreds.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 
+	httpStart := time.Now()
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	httpDuration := time.Since(httpStart)
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
+
+	logger.Get().Debug().
+		Str("method", method).
+		Dur("http_duration", httpDuration).
+		Int("status_code", resp.StatusCode).
+		Int("response_size", len(respBody)).
+		Msg("HTTP request complete")
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API call failed with status %d: %s", resp.StatusCode, string(respBody))

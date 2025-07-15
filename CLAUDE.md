@@ -76,3 +76,10 @@ The codebase supports two deployment modes:
 - Credential providers implement common interface for different storage backends
 - Server supports both regular JSON and SSE streaming responses
 - Middleware applied to all routes, including main proxy endpoint
+
+## Performance Considerations
+
+### Request Compression
+- **IMPORTANT**: Request body compression is intentionally disabled. Testing revealed that CloudCode API has severe performance issues with gzip-compressed requests (50+ seconds vs 2.6 seconds without compression).
+- The proxy sends all requests uncompressed to ensure optimal streaming performance.
+- This was discovered through debugging where direct `curl` requests to CloudCode API (without compression) were significantly faster than proxy requests with compression.

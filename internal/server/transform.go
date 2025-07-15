@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/dvcrn/gemini-cli-proxy/internal/env"
 	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
@@ -127,8 +128,14 @@ func unwrapCloudCodeResponse(cloudCodeResp map[string]interface{}) map[string]in
 
 // TransformRequest rewrites the incoming standard Gemini request to the Cloud Code format (server method).
 func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, error) {
+	transformStartTime := time.Now()
 	logger.Get().Debug().Msg("--- Start Request Transformation ---")
-	defer logger.Get().Debug().Msg("--- End Request Transformation ---")
+	defer func() {
+		totalTransformDuration := time.Since(transformStartTime)
+		logger.Get().Debug().
+			Dur("total_transform_duration", totalTransformDuration).
+			Msg("--- End Request Transformation ---")
+	}()
 
 	// Log truncated request body for debugging
 	bodyPreview := string(body)
@@ -138,11 +145,16 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	logger.Get().Debug().Str("body", bodyPreview).Msg("Original request body")
 
 	// Parse the request body as a generic map to handle all fields
+	parseStart := time.Now()
 	var requestData map[string]interface{}
 	if err := json.Unmarshal(body, &requestData); err != nil {
 		logger.Get().Error().Err(err).Msg("Error unmarshaling JSON")
 		return nil, err
 	}
+	parseDuration := time.Since(parseStart)
+	logger.Get().Debug().
+		Dur("json_parse_duration", parseDuration).
+		Msg("JSON parsing complete")
 
 	// Extract model and action from the path
 	model, action := parseGeminiPath(r.URL.Path)
@@ -168,19 +180,34 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	}
 
 	// Get project ID from environment or use default
+	projectIDStart := time.Now()
 	projectID, hasProjectID := env.Get("CLOUDCODE_GCP_PROJECT_ID")
 	if !hasProjectID {
+		logger.Get().Debug().Msg("No CLOUDCODE_GCP_PROJECT_ID found, discovering project ID...")
+		discoveryStart := time.Now()
 		var err error
 		projectID, err = s.DiscoverProjectID()
 		if err != nil {
 			logger.Get().Error().Err(err).Msg("Error discovering project ID")
 			return nil, err
 		}
+		discoveryDuration := time.Since(discoveryStart)
+		logger.Get().Debug().
+			Dur("project_discovery_duration", discoveryDuration).
+			Str("discovered_project_id", projectID).
+			Msg("Project ID discovery complete")
 	} else {
 		logger.Get().Debug().Str("project_id", projectID).Msg("Using project ID from CLOUDCODE_GCP_PROJECT_ID environment variable")
 	}
+	projectIDDuration := time.Since(projectIDStart)
+	if projectIDDuration > 10*time.Millisecond {
+		logger.Get().Debug().
+			Dur("project_id_resolution_duration", projectIDDuration).
+			Msg("Project ID resolution took longer than expected")
+	}
 
 	// Build the appropriate request body based on the action
+	buildStart := time.Now()
 	var newBody []byte
 	var err error
 	if action == "countTokens" {
@@ -196,6 +223,12 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 			return nil, err
 		}
 	}
+	buildDuration := time.Since(buildStart)
+	logger.Get().Debug().
+		Dur("request_build_duration", buildDuration).
+		Str("action", action).
+		Msg("Request building complete")
+
 	// Log truncated transformed body
 	transformedPreview := string(newBody)
 	if len(transformedPreview) > 200 {
@@ -219,28 +252,34 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 
 	logger.Get().Debug().Str("url", targetURL.String()).Msg("Target URL")
 
+	// Prepare request body
+	bodySize := len(newBody)
+
+	// Never compress requests - CloudCode API has severe performance issues with compressed requests
+	// (50+ seconds with compression vs 2.6 seconds without)
+	reqBody := bytes.NewReader(newBody)
+	logger.Get().Debug().
+		Int("body_size", bodySize).
+		Msg("Request body not compressed (disabled for performance)")
+
 	// Create the proxy request with the updated URL
-	proxyReq, err := http.NewRequest(r.Method, targetURL.String(), bytes.NewReader(newBody))
+	proxyReq, err := http.NewRequest(r.Method, targetURL.String(), reqBody)
 	if err != nil {
 		logger.Get().Error().Err(err).Msg("Error creating new request")
 		return nil, err
 	}
 
-	// Copy headers from original request
+	// Create clean headers - only send what's required
 	proxyReq.Header = make(http.Header)
-	for h, val := range r.Header {
-		// Skip certain headers that need special handling
-		if h == "Authorization" || h == "Host" || h == "Content-Length" {
-			continue
-		}
-		// Also skip any potential API key headers
-		lowerHeader := strings.ToLower(h)
-		if strings.Contains(lowerHeader, "api-key") || lowerHeader == "x-goog-api-key" {
-			logger.Get().Debug().Str("header", h).Msg("Skipping potential API key header")
-			continue
-		}
-		proxyReq.Header[h] = val
-	}
+
+	// Set static headers
+	proxyReq.Header.Set("Content-Type", "application/json")
+	proxyReq.Header.Set("User-Agent", "GeminiCLI/v23.5.0 (darwin; arm64) google-api-nodejs-client/9.15.1")
+	proxyReq.Header.Set("x-goog-api-client", "gl-node/23.5.0")
+	proxyReq.Header.Set("Accept", "*/*")
+	proxyReq.Header.Set("Accept-Encoding", "gzip,deflate")
+	proxyReq.Header.Set("Host", targetURL.Host)
+	proxyReq.Header.Set("Connection", "close")
 
 	// Set authorization header
 	clientAuthHeader := r.Header.Get("Authorization")
@@ -256,19 +295,12 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 		}
 	}
 
+	// Set content length (no compression)
+	proxyReq.Header.Set("Content-Length", fmt.Sprintf("%d", len(newBody)))
+
 	// Log whether API key was in the URL (for debugging)
 	if hasAPIKey {
 		logger.Get().Debug().Msg("API Key provided in query params, removed it for CloudCode request")
-	}
-
-	// Set required headers for CloudCode
-	proxyReq.Header.Set("Host", targetURL.Host)
-	proxyReq.Header.Set("Content-Length", fmt.Sprintf("%d", len(newBody)))
-	proxyReq.Header.Set("Content-Type", "application/json")
-
-	// Set x-goog-api-client if not present
-	if proxyReq.Header.Get("x-goog-api-client") == "" {
-		proxyReq.Header.Set("x-goog-api-client", "gemini-proxy/1.0")
 	}
 
 	return proxyReq, nil
