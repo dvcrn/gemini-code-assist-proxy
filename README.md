@@ -20,13 +20,13 @@ A Go proxy server that transforms standard Gemini API requests into the format e
 ### Local Development
 
 ```
-go install github.com/dvcrn/gemini-cli-proxy/cmd/gemini-cli-proxy@latest
+go install github.com/dvcrn/gemini-code-assist-proxy/cmd/gemini-code-assist-proxy@latest
 ```
 
 Then to start:
 
 ```
-gemini-cli-proxy
+gemini-code-assist-proxy
 ```
 
 ### Cloudflare Workers Deployment
@@ -35,9 +35,9 @@ For production deployment on Cloudflare Workers:
 
 1. **Create KV namespace** (required for credential storage):
    ```bash
-   wrangler kv namespace create "gemini-cli-proxy-kv"
+   wrangler kv namespace create "gemini-code-assist-proxy-kv"
    ```
-   
+
    This will output a namespace ID. Add it to your `wrangler.toml`:
    ```toml
    kv_namespaces = [
@@ -59,7 +59,7 @@ For production deployment on Cloudflare Workers:
    ```bash
    # Generate a secure admin key (alphanumeric only, URL-safe)
    head -c 32 /dev/urandom | base64 | tr -d "=+/" | tr -d "\n" | head -c 32
-   
+
    # Store it as a secret in Workers
    wrangler secret put ADMIN_API_KEY
    ```
@@ -170,7 +170,7 @@ curl https://your-worker.workers.dev/admin/credentials/status \
    # Generate admin key (alphanumeric only, URL-safe)
    ADMIN_KEY=$(head -c 32 /dev/urandom | base64 | tr -d "=+/" | tr -d "\n" | head -c 32)
    echo "Generated admin key: $ADMIN_KEY"
-   
+
    # Set it in Workers
    wrangler secret put ADMIN_API_KEY
    ```
@@ -180,7 +180,7 @@ curl https://your-worker.workers.dev/admin/credentials/status \
    # Replace with your actual worker URL and admin key
    WORKER_URL="https://your-worker.workers.dev"
    ADMIN_KEY="YOUR_ADMIN_API_KEY"
-   
+
    # Upload credentials from local file
    curl -X POST $WORKER_URL/admin/credentials \
      -H "Authorization: Bearer $ADMIN_KEY" \
@@ -372,4 +372,3 @@ Check logs for:
 - Request transformation details
 - Code Assist response times
 - SSE event delivery timing
-

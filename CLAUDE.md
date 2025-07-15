@@ -44,7 +44,7 @@ This is a Go proxy server that transforms standard Gemini API requests into Goog
 
 The codebase supports two deployment modes:
 
-1. **Local/Traditional** (`cmd/gemini-cli-proxy/`) - Uses FileProvider for credentials
+1. **Local/Traditional** (`cmd/gemini-code-assist-proxy/`) - Uses FileProvider for credentials
 2. **Cloudflare Workers** (`cmd/gemini-proxy-worker/`) - Uses CloudflareKVProvider for credentials
 
 ### Key Transformations

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 
 	"github.com/syumai/workers/cloudflare/fetch"
 	"github.com/syumai/workers/cloudflare/kv"

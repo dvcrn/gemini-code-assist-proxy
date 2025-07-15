@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dvcrn/gemini-cli-proxy/internal/env"
-	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/env"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 )
 
 // CloudCodeRequest represents the structure of the request expected by the Cloud Code API.

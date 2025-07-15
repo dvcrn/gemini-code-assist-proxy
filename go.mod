@@ -1,4 +1,4 @@
-module github.com/dvcrn/gemini-cli-proxy
+module github.com/dvcrn/gemini-code-assist-proxy
 
 go 1.24.4
 

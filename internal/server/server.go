@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
-	"github.com/dvcrn/gemini-cli-proxy/internal/env"
-	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/credentials"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/env"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 )
 
 // Server represents the proxy server with its dependencies

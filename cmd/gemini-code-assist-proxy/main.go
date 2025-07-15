@@ -1,10 +1,10 @@
 package main
 
 import (
-	"github.com/dvcrn/gemini-cli-proxy/internal/credentials"
-	"github.com/dvcrn/gemini-cli-proxy/internal/env"
-	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
-	"github.com/dvcrn/gemini-cli-proxy/internal/server"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/credentials"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/env"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/server"
 )
 
 func main() {

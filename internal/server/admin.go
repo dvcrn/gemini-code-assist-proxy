@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dvcrn/gemini-cli-proxy/internal/env"
-	"github.com/dvcrn/gemini-cli-proxy/internal/logger"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/env"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 )
 
 // adminMiddleware checks for valid admin API key from either

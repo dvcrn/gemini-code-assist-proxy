@@ -1,4 +1,4 @@
-name = "gemini-cli-proxy"
+name = "gemini-code-assist-proxy"
 main = "build/worker.mjs"
 compatibility_date = "2022-05-13"
 account_id = "02c07a2514d9a25f58c78a180bb8c6f3"
@@ -6,7 +6,7 @@ compatibility_flags = [
     "streams_enable_constructors"
 ]
 kv_namespaces = [
-  { binding = "gemini_cli_proxy_kv", id = "2c683e97ff6a43c7b20edca20419bd1f" }
+  { binding = "gemini_code_assist_proxy_kv", id = "2c683e97ff6a43c7b20edca20419bd1f" }
 ]
 
 [vars]
