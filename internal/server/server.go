@@ -95,6 +95,9 @@ func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE boo
 		}
 	}
 
+	// After the loop, send a final newline to properly terminate the SSE stream
+	fmt.Fprintln(w)
+
 	if err := scanner.Err(); err != nil {
 		logger.Get().Error().Err(err).Msg("Error reading stream")
 	}
