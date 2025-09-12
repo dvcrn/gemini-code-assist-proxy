@@ -7,3 +7,5 @@ node_modules
 *.har
 *.proxymanlogv2
 build/
+com.gemini-proxy.plist
+gemini-code-assist-proxy
