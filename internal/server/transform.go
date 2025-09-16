@@ -30,6 +30,7 @@ func parseGeminiPath(path string) (model, action string) {
 	if len(matches) < 3 {
 		return "", ""
 	}
+
 	return matches[1], matches[2]
 }
 
@@ -111,16 +112,17 @@ func unwrapCloudCodeResponse(cloudCodeResp map[string]interface{}) map[string]in
 	// Build the standard Gemini response by merging fields
 	geminiResp := make(map[string]interface{})
 
-	// Copy all fields from the response object
-	for k, v := range response {
-		geminiResp[k] = v
-	}
-
-	// Copy other top-level fields (except "response")
+	// Copy top-level fields first (except "response")
 	for k, v := range cloudCodeResp {
 		if k != "response" {
 			geminiResp[k] = v
 		}
+	}
+
+	// Then, copy all fields from the nested response object.
+	// This ensures the nested response's fields (like 'candidates') take precedence.
+	for k, v := range response {
+		geminiResp[k] = v
 	}
 
 	return geminiResp
@@ -155,6 +157,13 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	logger.Get().Debug().
 		Dur("json_parse_duration", parseDuration).
 		Msg("JSON parsing complete")
+
+	// Validate function call/response parity before sending to CloudCode
+	// This helps catch issues early and provides better error messages
+	if err := validateFunctionCallParity(requestData); err != nil {
+		logger.Get().Error().Err(err).Msg("Function call/response parity validation failed")
+		return nil, err
+	}
 
 	// Extract model and action from the path
 	model, action := parseGeminiPath(r.URL.Path)
@@ -359,4 +368,124 @@ func TransformJSONResponse(body []byte) []byte {
 	}
 
 	return transformedJSON
+}
+
+// countFunctionCalls counts the number of functionCall parts in a turn
+func countFunctionCalls(turn map[string]interface{}) int {
+	count := 0
+
+	// Check if this turn has parts
+	parts, ok := turn["parts"].([]interface{})
+	if !ok {
+		return 0
+	}
+
+	// Count functionCall parts
+	for _, part := range parts {
+		partMap, ok := part.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, hasFunctionCall := partMap["functionCall"]; hasFunctionCall {
+			count++
+		}
+	}
+
+	return count
+}
+
+// countFunctionResponses counts the number of functionResponse parts in a turn
+func countFunctionResponses(turn map[string]interface{}) int {
+	count := 0
+
+	// Check if this turn has parts
+	parts, ok := turn["parts"].([]interface{})
+	if !ok {
+		return 0
+	}
+
+	// Count functionResponse parts
+	for _, part := range parts {
+		partMap, ok := part.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, hasFunctionResponse := partMap["functionResponse"]; hasFunctionResponse {
+			count++
+		}
+	}
+
+	return count
+}
+
+// validateFunctionCallParity checks that function calls and responses match
+// Returns an error if there's a mismatch
+func validateFunctionCallParity(requestData map[string]interface{}) error {
+	// Extract contents array
+	contents, ok := requestData["contents"].([]interface{})
+	if !ok || len(contents) == 0 {
+		// No contents, nothing to validate
+		return nil
+	}
+
+	// Iterate through contents to find model turns with function calls
+	for i := 0; i < len(contents); i++ {
+		currentTurn, ok := contents[i].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Check if this is a model turn
+		role, hasRole := currentTurn["role"].(string)
+		if !hasRole || role != "model" {
+			continue
+		}
+
+		// Count function calls in this model turn
+		functionCallCount := countFunctionCalls(currentTurn)
+		if functionCallCount == 0 {
+			continue // No function calls in this turn
+		}
+
+		// Check if this is the last turn (no following turn for responses)
+		if i == len(contents)-1 {
+			return fmt.Errorf(
+				"Function call/response parity violation: model turn at index %d (last turn) has %d function calls but no following user turn with responses. Function calls must be followed by a user turn with matching function responses.",
+				i, functionCallCount,
+			)
+		}
+
+		// Check the next turn
+		nextTurn, ok := contents[i+1].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf(
+				"Function call/response parity violation: model turn at index %d has %d function calls but the following turn at index %d is invalid.",
+				i, functionCallCount, i+1,
+			)
+		}
+
+		// The next turn MUST be a user turn with function responses
+		nextRole, hasNextRole := nextTurn["role"].(string)
+		if !hasNextRole || nextRole != "user" {
+			// This is an error - function calls must be immediately followed by user responses
+			return fmt.Errorf(
+				"Function call/response parity violation: model turn at index %d has %d function calls but is followed by a %s turn instead of a user turn with function responses.",
+				i, functionCallCount, nextRole,
+			)
+		}
+
+		// Count function responses in the user turn
+		functionResponseCount := countFunctionResponses(nextTurn)
+
+		// Check for parity
+		if functionCallCount != functionResponseCount {
+			return fmt.Errorf(
+				"Function call/response parity violation: model turn at index %d has %d function calls, but following user turn has %d function responses. Every function call must have exactly one corresponding response.",
+				i, functionCallCount, functionResponseCount,
+			)
+		}
+
+	}
+
+	return nil
 }

@@ -483,3 +483,468 @@ func TestUnwrapCloudCodeResponse(t *testing.T) {
 		})
 	}
 }
+
+func TestCountFunctionCalls(t *testing.T) {
+	tests := []struct {
+		name     string
+		turn     map[string]interface{}
+		expected int
+	}{
+		{
+			name: "single function call",
+			turn: map[string]interface{}{
+				"role": "model",
+				"parts": []interface{}{
+					map[string]interface{}{
+						"functionCall": map[string]interface{}{
+							"name": "test_function",
+							"args": map[string]interface{}{"key": "value"},
+						},
+					},
+				},
+			},
+			expected: 1,
+		},
+		{
+			name: "multiple function calls",
+			turn: map[string]interface{}{
+				"role": "model",
+				"parts": []interface{}{
+					map[string]interface{}{
+						"functionCall": map[string]interface{}{
+							"name": "function1",
+						},
+					},
+					map[string]interface{}{
+						"functionCall": map[string]interface{}{
+							"name": "function2",
+						},
+					},
+					map[string]interface{}{
+						"functionCall": map[string]interface{}{
+							"name": "function3",
+						},
+					},
+				},
+			},
+			expected: 3,
+		},
+		{
+			name: "no function calls",
+			turn: map[string]interface{}{
+				"role": "model",
+				"parts": []interface{}{
+					map[string]interface{}{
+						"text": "This is just text",
+					},
+				},
+			},
+			expected: 0,
+		},
+		{
+			name: "mixed parts with function calls",
+			turn: map[string]interface{}{
+				"role": "model",
+				"parts": []interface{}{
+					map[string]interface{}{
+						"text": "Let me help you with that",
+					},
+					map[string]interface{}{
+						"functionCall": map[string]interface{}{
+							"name": "search",
+						},
+					},
+					map[string]interface{}{
+						"text": "And also this",
+					},
+					map[string]interface{}{
+						"functionCall": map[string]interface{}{
+							"name": "calculate",
+						},
+					},
+				},
+			},
+			expected: 2,
+		},
+		{
+			name:     "empty turn",
+			turn:     map[string]interface{}{},
+			expected: 0,
+		},
+		{
+			name: "no parts field",
+			turn: map[string]interface{}{
+				"role": "model",
+			},
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := countFunctionCalls(tt.turn)
+			if result != tt.expected {
+				t.Errorf("countFunctionCalls() = %d, want %d", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCountFunctionResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		turn     map[string]interface{}
+		expected int
+	}{
+		{
+			name: "single function response",
+			turn: map[string]interface{}{
+				"role": "user",
+				"parts": []interface{}{
+					map[string]interface{}{
+						"functionResponse": map[string]interface{}{
+							"name":     "test_function",
+							"response": map[string]interface{}{"result": "success"},
+						},
+					},
+				},
+			},
+			expected: 1,
+		},
+		{
+			name: "multiple function responses",
+			turn: map[string]interface{}{
+				"role": "user",
+				"parts": []interface{}{
+					map[string]interface{}{
+						"functionResponse": map[string]interface{}{
+							"name": "function1",
+						},
+					},
+					map[string]interface{}{
+						"functionResponse": map[string]interface{}{
+							"name": "function2",
+						},
+					},
+					map[string]interface{}{
+						"functionResponse": map[string]interface{}{
+							"name": "function3",
+						},
+					},
+				},
+			},
+			expected: 3,
+		},
+		{
+			name: "no function responses",
+			turn: map[string]interface{}{
+				"role": "user",
+				"parts": []interface{}{
+					map[string]interface{}{
+						"text": "This is just text",
+					},
+				},
+			},
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := countFunctionResponses(tt.turn)
+			if result != tt.expected {
+				t.Errorf("countFunctionResponses() = %d, want %d", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateFunctionCallParity(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestData map[string]interface{}
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid parity - single function call and response",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "search",
+									"args": map[string]interface{}{"query": "test"},
+								},
+							},
+						},
+					},
+					map[string]interface{}{
+						"role": "user",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionResponse": map[string]interface{}{
+									"name":     "search",
+									"response": map[string]interface{}{"results": []interface{}{}},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid parity - multiple function calls and responses",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "function1",
+								},
+							},
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "function2",
+								},
+							},
+						},
+					},
+					map[string]interface{}{
+						"role": "user",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionResponse": map[string]interface{}{
+									"name": "function1",
+								},
+							},
+							map[string]interface{}{
+								"functionResponse": map[string]interface{}{
+									"name": "function2",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid parity - more calls than responses",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "function1",
+								},
+							},
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "function2",
+								},
+							},
+						},
+					},
+					map[string]interface{}{
+						"role": "user",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionResponse": map[string]interface{}{
+									"name": "function1",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "2 function calls, but following user turn has 1 function responses",
+		},
+		{
+			name: "invalid parity - fewer calls than responses",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "function1",
+								},
+							},
+						},
+					},
+					map[string]interface{}{
+						"role": "user",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionResponse": map[string]interface{}{
+									"name": "function1",
+								},
+							},
+							map[string]interface{}{
+								"functionResponse": map[string]interface{}{
+									"name": "function2",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "1 function calls, but following user turn has 2 function responses",
+		},
+		{
+			name: "valid - no function calls",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"text": "Hello",
+							},
+						},
+					},
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"text": "Hi there!",
+							},
+						},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid - empty contents",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{},
+			},
+			expectError: false,
+		},
+		{
+			name:        "valid - no contents field",
+			requestData: map[string]interface{}{},
+			expectError: false,
+		},
+		{
+			name: "invalid - function call at end (no response turn)",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"text": "Search for something",
+							},
+						},
+					},
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "search",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectError: true, // Function calls MUST be followed by responses
+			errorMsg:    "last turn) has 1 function calls but no following user turn",
+		},
+		{
+			name: "invalid - function call followed by model turn instead of user",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "search",
+								},
+							},
+						},
+					},
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"text": "Still waiting for response",
+							},
+						},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "followed by a model turn instead of a user turn",
+		},
+		{
+			name: "invalid - multiple function calls at end",
+			requestData: map[string]interface{}{
+				"contents": []interface{}{
+					map[string]interface{}{
+						"role": "user",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"text": "Do multiple things",
+							},
+						},
+					},
+					map[string]interface{}{
+						"role": "model",
+						"parts": []interface{}{
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "function1",
+								},
+							},
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "function2",
+								},
+							},
+							map[string]interface{}{
+								"functionCall": map[string]interface{}{
+									"name": "function3",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "last turn) has 3 function calls but no following user turn",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateFunctionCallParity(tt.requestData)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("validateFunctionCallParity() expected error but got nil")
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("validateFunctionCallParity() error = %v, want error containing %v", err, tt.errorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("validateFunctionCallParity() unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
