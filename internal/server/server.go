@@ -34,6 +34,7 @@ func NewServer(provider credentials.CredentialsProvider) *Server {
 		mux:        http.NewServeMux(),
 	}
 	s.setupRoutes()
+
 	return s
 }
 
@@ -524,17 +525,20 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 // Start launches the proxy server with the configured provider
 func (s *Server) Start(addr string) error {
 	// Load OAuth credentials on startup
-	if err := s.LoadCredentials(); err != nil {
+	if err := s.LoadCredentials(false); err != nil {
 		logger.Get().Error().Err(err).Msg("Failed to load OAuth credentials")
 		logger.Get().Warn().Msg("The proxy will run but authentication will fail without valid credentials")
 	}
+
+	// Start periodic token refresh
+	s.startTokenRefreshLoop()
 
 	logger.Get().Info().Msgf("Starting proxy server on %s", addr)
 	return http.ListenAndServe(addr, s.mux)
 }
 
 // LoadCredentials loads OAuth credentials using the configured provider
-func (s *Server) LoadCredentials() error {
+func (s *Server) LoadCredentials(isPeriodicRefresh bool) error {
 	creds, err := s.provider.GetCredentials()
 	if err != nil {
 		return err
@@ -559,13 +563,44 @@ func (s *Server) LoadCredentials() error {
 				s.oauthCreds = creds
 			}
 		} else {
-			timeUntilExpiry := time.Until(expiryTime)
-			logger.Get().Info().Dur("valid_for", timeUntilExpiry.Round(time.Second)).Msg("OAuth token valid")
+			if !isPeriodicRefresh {
+				timeUntilExpiry := time.Until(expiryTime)
+				logger.Get().Info().Dur("valid_for", timeUntilExpiry.Round(time.Second)).Msg("OAuth token valid")
+			}
 		}
 	}
 
-	logger.Get().Info().Str("provider", s.provider.Name()).Msg("Loaded OAuth credentials")
+	if !isPeriodicRefresh {
+		logger.Get().Info().Str("provider", s.provider.Name()).Msg("Loaded OAuth credentials")
+	}
 	return nil
+}
+
+// startTokenRefreshLoop starts a goroutine to periodically refresh the OAuth token.
+func (s *Server) startTokenRefreshLoop() {
+	// Get refresh interval from environment, default to 5 minutes
+	refreshIntervalStr := env.GetOrDefault("TOKEN_REFRESH_INTERVAL", "5m")
+	refreshInterval, err := time.ParseDuration(refreshIntervalStr)
+	if err != nil {
+		logger.Get().Warn().Err(err).Str("value", refreshIntervalStr).Msg("Invalid token refresh interval, defaulting to 5 minutes")
+		refreshInterval = 5 * time.Minute
+	}
+
+	logger.Get().Info().Dur("refresh_interval", refreshInterval).Msg("Starting periodic token refresh")
+
+	// Run the refresh loop in a separate goroutine
+	go func() {
+		// Create a ticker that fires at the specified interval
+		ticker := time.NewTicker(refreshInterval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			logger.Get().Debug().Msg("Running periodic token refresh check...")
+			if err := s.LoadCredentials(true); err != nil {
+				logger.Get().Error().Err(err).Msg("Error during periodic token refresh")
+			}
+		}
+	}()
 }
 
 // DiscoverProjectID automatically discovers the GCP project ID using the Code Assist API.
