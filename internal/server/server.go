@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,12 +49,11 @@ type sseMessage struct {
 func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE bool) {
 	startTime := time.Now()
 	eventCount := 0
+	firstDataWritten := false
 
-	if debugSSE {
-		logger.Get().Debug().
-			Time("stream_start", startTime).
-			Msg("Starting direct SSE stream processing (Workers mode)")
-	}
+	logger.Get().Info().
+		Time("stream_start", startTime).
+		Msg("Starting direct SSE stream processing (Workers mode)")
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -66,8 +66,8 @@ func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE boo
 			logger.Get().Debug().Str("raw_line", line).Msg("Raw SSE line received from upstream")
 		}
 
-		if firstLine && debugSSE {
-			logger.Get().Debug().
+		if firstLine {
+			logger.Get().Info().
 				Dur("time_to_first_data", time.Since(startTime)).
 				Msg("First SSE line received from upstream")
 			firstLine = false
@@ -87,6 +87,12 @@ func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE boo
 				}
 
 				eventCount++
+				if !firstDataWritten {
+					logger.Get().Info().
+						Dur("time_to_first_write", time.Since(startTime)).
+						Msg("First SSE data written to client (Workers direct mode)")
+					firstDataWritten = true
+				}
 				if debugSSE {
 					logger.Get().Debug().
 						Int("event_num", eventCount).
@@ -120,8 +126,8 @@ func streamSSEResponseDirect(body io.Reader, w http.ResponseWriter, debugSSE boo
 
 // streamSSEResponse handles SSE streaming with a goroutine pipeline for better performance
 func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flusher, canFlush bool, debugSSE bool) {
-	// Get buffer size from environment, default to 3
-	bufferSize := 3
+	// Get buffer size from environment, default to 1 for minimal buffering
+	bufferSize := 1
 	if envSize, ok := env.Get("SSE_BUFFER_SIZE"); ok {
 		if size, err := strconv.Atoi(envSize); err == nil && size > 0 {
 			bufferSize = size
@@ -211,6 +217,7 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 	defer close(done)
 
 	firstDataWritten := false
+	firstFlushTime := time.Time{}
 	// For Workers environment without flush support, we need to ensure each write
 	// is followed by a newline to trigger streaming
 	for msg := range transformedLines {
@@ -231,20 +238,22 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 		}
 
 		// Log SSE events in debug mode
-		if debugSSE && msg.isDataLine {
+		if msg.isDataLine {
 			eventCount++
 			if !firstDataWritten {
-				logger.Get().Debug().
+				logger.Get().Info().
 					Dur("time_to_first_write", time.Since(startTime)).
 					Msg("First SSE data written to client")
 				firstDataWritten = true
 			}
-			logger.Get().Debug().
-				Int("event_num", eventCount).
-				Dur("elapsed", time.Since(startTime)).
-				Dur("write_duration", time.Since(writeStart)).
-				Bool("workers_mode", !canFlush).
-				Msg("SSE event written to client")
+			if debugSSE {
+				logger.Get().Debug().
+					Int("event_num", eventCount).
+					Dur("elapsed", time.Since(startTime)).
+					Dur("write_duration", time.Since(writeStart)).
+					Bool("workers_mode", !canFlush).
+					Msg("SSE event written to client")
+			}
 		}
 
 		// Flush after data lines or empty lines (if flushing is available)
@@ -252,9 +261,16 @@ func streamSSEResponse(body io.Reader, w http.ResponseWriter, flusher http.Flush
 			flushStart := time.Now()
 			flusher.Flush()
 			flushedEventCount++
+			if firstFlushTime.IsZero() {
+				firstFlushTime = time.Now()
+				logger.Get().Info().
+					Dur("time_to_first_flush", firstFlushTime.Sub(startTime)).
+					Msg("First SSE flush to client")
+			}
 			if debugSSE {
 				logger.Get().Debug().
 					Dur("flush_duration", time.Since(flushStart)).
+					Int("flush_count", flushedEventCount).
 					Msg("Flushed SSE data")
 			}
 		} else if !canFlush {
@@ -434,13 +450,28 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header()[h] = val
 	}
 
-	// Check if this is a streaming response
+	// Check if this is a streaming response - use mime.ParseMediaType for robust detection
 	contentType := resp.Header.Get("Content-Type")
-	isStreaming := contentType == "text/event-stream" && resp.StatusCode == http.StatusOK
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		// If parsing fails, fall back to simple check
+		mediaType = contentType
+	}
+	isStreaming := mediaType == "text/event-stream" && resp.StatusCode == http.StatusOK
+
+	// Log the Content-Type detection
+	logger.Get().Debug().
+		Str("raw_content_type", contentType).
+		Str("parsed_media_type", mediaType).
+		Bool("is_streaming", isStreaming).
+		Msg("Content-Type detection for streaming")
 
 	if isStreaming {
 		// Handle SSE streaming response
-		logger.Get().Debug().Msg("Handling streaming response")
+		logger.Get().Info().
+			Str("content_type", contentType).
+			Str("path", r.URL.Path).
+			Msg("Starting SSE streaming response handling")
 
 		// Check for debug mode from environment or query parameter
 		debugSSE := env.GetOrDefault("DEBUG_SSE", "false") == "true"
@@ -456,10 +487,17 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Set headers for SSE
+		w.Header().Del("Content-Length") // Always remove Content-Length for streaming
 		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(resp.StatusCode)
+
+		// Flush headers immediately to start streaming
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+			logger.Get().Debug().Msg("Flushed SSE headers immediately")
+		}
 
 		// Check if flushing is available (graceful fallback if not)
 		flusher, canFlush := w.(http.Flusher)
@@ -473,6 +511,12 @@ func (s *Server) HandleProxyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Handle non-streaming response
+		logger.Get().Info().
+			Str("content_type", contentType).
+			Str("path", r.URL.Path).
+			Int("status_code", resp.StatusCode).
+			Msg("Handling non-streaming response (buffering entire body)")
+
 		w.WriteHeader(resp.StatusCode)
 
 		// Read the entire response

@@ -278,6 +278,9 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 		return nil, err
 	}
 
+	// Propagate client context for proper cancellation
+	proxyReq = proxyReq.WithContext(r.Context())
+
 	// Create clean headers - only send what's required
 	proxyReq.Header = make(http.Header)
 
@@ -286,9 +289,19 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 	proxyReq.Header.Set("User-Agent", "GeminiCLI/v23.5.0 (darwin; arm64) google-api-nodejs-client/9.15.1")
 	proxyReq.Header.Set("x-goog-api-client", "gl-node/23.5.0")
 	proxyReq.Header.Set("Accept", "*/*")
-	proxyReq.Header.Set("Accept-Encoding", "gzip,deflate")
-	proxyReq.Header.Set("Host", targetURL.Host)
-	proxyReq.Header.Set("Connection", "close")
+
+	// Conditional compression based on action type
+	// For streaming actions, don't request compression to avoid issues with SSE parsing
+	if strings.HasPrefix(action, "stream") {
+		// No compression for streaming endpoints
+		proxyReq.Header.Del("Accept-Encoding") // Ensure identity encoding
+		logger.Get().Debug().Msg("Disabled compression for streaming endpoint")
+	} else {
+		// For non-streaming endpoints, allow compression
+		proxyReq.Header.Set("Accept-Encoding", "gzip,deflate")
+	}
+	// Don't set Host header - Go sets it automatically from the URL
+	// Don't set Connection header - let HTTP/2 work properly
 
 	// Set authorization header
 	clientAuthHeader := r.Header.Get("Authorization")
