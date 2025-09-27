@@ -2,6 +2,13 @@
 
 set -e
 
+# Prompt for Admin API Key
+read -p "Enter the ADMIN_API_KEY: " ADMIN_API_KEY
+if [ -z "${ADMIN_API_KEY}" ]; then
+  echo "Error: ADMIN_API_KEY is required."
+  exit 1
+fi
+
 # Get the absolute path of the current directory
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLIST_NAME="com.gemini-proxy.plist"
@@ -15,38 +22,8 @@ echo "Project directory: ${PROJECT_DIR}"
 # Create LaunchAgents directory if it doesn't exist
 mkdir -p "${LAUNCHAGENTS_DIR}"
 
-# Check if Go is available and decide on execution method
-GO_BIN="$(which go 2>/dev/null || echo "")"
-if [ -n "${GO_BIN}" ]; then
-    echo "Go is installed at: ${GO_BIN}"
-    echo "Building binary..."
-    
-    # Build the binary
-    cd "${PROJECT_DIR}"
-    if command -v just &> /dev/null; then
-        just build
-    else
-        go build -o gemini-code-assist-proxy ./cmd/gemini-code-assist-proxy
-    fi
-    
-    if [ -f "${PROJECT_DIR}/gemini-code-assist-proxy" ] && [ -x "${PROJECT_DIR}/gemini-code-assist-proxy" ]; then
-        echo "Binary built successfully"
-        BINARY_PATH="${PROJECT_DIR}/gemini-code-assist-proxy"
-        USE_GO_RUN="false"
-    else
-        echo "Binary build failed or not executable, will use 'go run' instead"
-        USE_GO_RUN="true"
-    fi
-else
-    echo "Go not found, LaunchAgent will use 'go run' (requires Go at runtime)"
-    USE_GO_RUN="true"
-    GO_BIN="go"  # Will need to be in PATH at runtime
-fi
-
 # Generate the plist file locally in project directory
-if [ "${USE_GO_RUN}" = "true" ]; then
-    # Create plist that uses go run
-    cat > "${PLIST_LOCAL}" <<EOF
+cat > "${PLIST_LOCAL}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -54,13 +31,8 @@ if [ "${USE_GO_RUN}" = "true" ]; then
     <key>Label</key>
     <string>com.gemini-proxy</string>
     
-    <key>ProgramArguments</key>
-    <array>
-        <string>${GO_BIN}</string>
-        <string>run</string>
-        <string>${PROJECT_DIR}/cmd/gemini-code-assist-proxy</string>
-        <string>-use-keychain</string>
-    </array>
+    <key>Program</key>
+    <string>${PROJECT_DIR}/run_proxy.sh</string>
     
     <key>WorkingDirectory</key>
     <string>${PROJECT_DIR}</string>
@@ -87,66 +59,18 @@ if [ "${USE_GO_RUN}" = "true" ]; then
     
     <key>EnvironmentVariables</key>
     <dict>
+        <key>PORT</key>
+        <string>9877</string>
+        <key>HOME</key>
+        <string>${HOME}</string>
         <key>PATH</key>
-        <string>/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-        <key>PORT</key>
-        <string>9877</string>
-        <key>HOME</key>
-        <string>${HOME}</string>
+        <string>${PATH}</string>
+        <key>ADMIN_API_KEY</key>
+        <string>${ADMIN_API_KEY}</string>
     </dict>
 </dict>
 </plist>
 EOF
-else
-    # Create plist that uses compiled binary
-    cat > "${PLIST_LOCAL}" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.gemini-proxy</string>
-    
-    <key>ProgramArguments</key>
-    <array>
-        <string>${BINARY_PATH}</string>
-        <string>-use-keychain</string>
-    </array>
-    
-    <key>WorkingDirectory</key>
-    <string>${PROJECT_DIR}</string>
-    
-    <key>RunAtLoad</key>
-    <true/>
-    
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-        <key>Crashed</key>
-        <true/>
-    </dict>
-    
-    <key>ThrottleInterval</key>
-    <integer>30</integer>
-    
-    <key>StandardOutPath</key>
-    <string>${HOME}/Library/Logs/gemini-proxy.log</string>
-    
-    <key>StandardErrorPath</key>
-    <string>${HOME}/Library/Logs/gemini-proxy.error.log</string>
-    
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PORT</key>
-        <string>9877</string>
-        <key>HOME</key>
-        <string>${HOME}</string>
-    </dict>
-</dict>
-</plist>
-EOF
-fi
 
 echo "Plist file created at: ${PLIST_LOCAL}"
 

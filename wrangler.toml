@@ -10,8 +10,8 @@ kv_namespaces = [
 ]
 
 [vars]
-ENV = "dev" # or prod
-DEBUG_SSE = "false"
+ENV = "prod" # or prod
+DEBUG_SSE = "true"
 
 [build]
 command = "just build-worker"
