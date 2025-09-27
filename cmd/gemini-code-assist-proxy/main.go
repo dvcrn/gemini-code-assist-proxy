@@ -7,6 +7,7 @@ import (
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/env"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/project"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/server"
 )
 
@@ -22,19 +23,27 @@ func main() {
 	// Perform startup auth check
 	logger.Get().Info().Msg("Performing startup authentication check...")
 	geminiClient := gemini.NewClient(provider)
-	if response, err := geminiClient.LoadCodeAssist(); err != nil {
+	loadAssistResponse, err := geminiClient.LoadCodeAssist()
+	if err != nil {
 		logger.Get().Warn().Err(err).Msg("Startup authentication check failed.")
 	} else {
-		tier := fmt.Sprintf("%s (%s)", response.CurrentTier.Name, response.CurrentTier.ID)
+		tier := fmt.Sprintf("%s (%s)", loadAssistResponse.CurrentTier.Name, loadAssistResponse.CurrentTier.ID)
 		logger.Get().Info().
 			Str("tier", tier).
-			Str("project_id", response.CloudAICompanionProject).
-			Bool("gcp_managed", response.GCPManaged).
+			Str("project_id", loadAssistResponse.CloudAICompanionProject).
+			Bool("gcp_managed", loadAssistResponse.GCPManaged).
 			Msg("Startup authentication check successful.")
 	}
 
-	// Create server with provider
-	srv := server.NewServer(provider)
+	// Discover project ID
+	envProjectID, _ := env.Get("CLOUDCODE_GCP_PROJECT_ID")
+	projectID, err := project.Discover(provider, envProjectID, loadAssistResponse)
+	if err != nil {
+		logger.Get().Fatal().Err(err).Msg("Failed to discover project ID")
+	}
+
+	// Create server with provider and project ID
+	srv := server.NewServer(provider, projectID)
 
 	// Start server
 	if err := srv.Start(":" + port); err != nil {

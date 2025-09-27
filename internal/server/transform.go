@@ -190,32 +190,8 @@ func (s *Server) TransformRequest(r *http.Request, body []byte) (*http.Request, 
 		model = normalizedModel
 	}
 
-	// Get project ID from environment or use default
-	projectIDStart := time.Now()
-	projectID, hasProjectID := env.Get("CLOUDCODE_GCP_PROJECT_ID")
-	if !hasProjectID {
-		logger.Get().Debug().Msg("No CLOUDCODE_GCP_PROJECT_ID found, discovering project ID...")
-		discoveryStart := time.Now()
-		var err error
-		projectID, err = s.DiscoverProjectID()
-		if err != nil {
-			logger.Get().Error().Err(err).Msg("Error discovering project ID")
-			return nil, err
-		}
-		discoveryDuration := time.Since(discoveryStart)
-		logger.Get().Debug().
-			Dur("project_discovery_duration", discoveryDuration).
-			Str("discovered_project_id", projectID).
-			Msg("Project ID discovery complete")
-	} else {
-		logger.Get().Debug().Str("project_id", projectID).Msg("Using project ID from CLOUDCODE_GCP_PROJECT_ID environment variable")
-	}
-	projectIDDuration := time.Since(projectIDStart)
-	if projectIDDuration > 10*time.Millisecond {
-		logger.Get().Debug().
-			Dur("project_id_resolution_duration", projectIDDuration).
-			Msg("Project ID resolution took longer than expected")
-	}
+	// Get project ID from the server's configuration
+	projectID := s.projectID
 
 	// Build the appropriate request body based on the action
 	buildStart := time.Now()

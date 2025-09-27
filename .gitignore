@@ -8,4 +8,4 @@ node_modules
 *.proxymanlogv2
 build/
 com.gemini-proxy.plist
-gemini-code-assist-proxy
+/gemini-code-assist-proxy
