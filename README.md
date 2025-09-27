@@ -9,7 +9,7 @@ To run locally, or to deploy to Cloudflare Workers
 - Transforms `generateContent` and `streamGenerateContent` requests/responses
 - Transforms `countTokens` requests/responses
 - Supports streaming responses and tool calls
-- Normalizes model names: any model with "pro" → `gemini-2.5-pro`, any with "flash" → `gemini-2.5-flash`
+- Normalizes model names: any model with "pro" → `gemini-2.5-pro`, any with "flash" → `gemini-2.5-flash`, any with "lite" → `gemini-2.5-flash-lite`
 
 ## Prerequisites
 
@@ -213,6 +213,7 @@ Automatically converts model names to Gemini Code Assist's supported models:
 
 - Any model containing "pro" → `gemini-2.5-pro`
 - Any model containing "flash" → `gemini-2.5-flash`
+- Any model containing "lite" → `gemini-2.5-flash-lite`
 
 Examples:
 - `gemini-1.5-pro` → `gemini-2.5-pro`
