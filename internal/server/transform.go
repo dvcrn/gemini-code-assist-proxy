@@ -38,12 +38,14 @@ func parseGeminiPath(path string) (model, action string) {
 // only two models supported by CloudCode: gemini-2.5-pro and gemini-2.5-flash
 func normalizeModelName(model string) string {
 	lowerModel := strings.ToLower(model)
-	if strings.Contains(lowerModel, "pro") {
+	if strings.Contains(lowerModel, "lite") {
+		return "gemini-2.5-flash-lite"
+	} else if strings.Contains(lowerModel, "pro") {
 		return "gemini-2.5-pro"
 	} else if strings.Contains(lowerModel, "flash") {
 		return "gemini-2.5-flash"
 	}
-	// Return as-is if neither pro nor flash is found
+	// Return as-is if none of the above are found
 	return model
 }
 

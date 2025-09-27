@@ -50,9 +50,9 @@ func TestNormalizeModelName(t *testing.T) {
 			expected: "gemini-2.5-flash",
 		},
 		{
-			name:     "gemini-2.0-flash-lite becomes gemini-2.5-flash",
+			name:     "gemini-2.0-flash-lite becomes gemini-2.5-flash-lite",
 			input:    "gemini-2.0-flash-lite",
-			expected: "gemini-2.5-flash",
+			expected: "gemini-2.5-flash-lite",
 		},
 		{
 			name:     "gemini-flash becomes gemini-2.5-flash",
@@ -63,6 +63,22 @@ func TestNormalizeModelName(t *testing.T) {
 			name:     "gemini-flash-001 becomes gemini-2.5-flash",
 			input:    "gemini-flash-001",
 			expected: "gemini-2.5-flash",
+		},
+		// Lite models
+		{
+			name:     "gemini-2.5-flash-lite stays unchanged",
+			input:    "gemini-2.5-flash-lite",
+			expected: "gemini-2.5-flash-lite",
+		},
+		{
+			name:     "gemini-lite becomes gemini-2.5-flash-lite",
+			input:    "gemini-lite",
+			expected: "gemini-2.5-flash-lite",
+		},
+		{
+			name:     "gemini-flash-lite becomes gemini-2.5-flash-lite",
+			input:    "gemini-flash-lite",
+			expected: "gemini-2.5-flash-lite",
 		},
 		// Case insensitive
 		{
@@ -79,6 +95,21 @@ func TestNormalizeModelName(t *testing.T) {
 			name:     "gEmInI-pRo becomes gemini-2.5-pro",
 			input:    "gEmInI-pRo",
 			expected: "gemini-2.5-pro",
+		},
+		{
+			name:     "GEMINI-LITE becomes gemini-2.5-flash-lite",
+			input:    "GEMINI-LITE",
+			expected: "gemini-2.5-flash-lite",
+		},
+		{
+			name:     "Gemini-Lite becomes gemini-2.5-flash-lite",
+			input:    "Gemini-Lite",
+			expected: "gemini-2.5-flash-lite",
+		},
+		{
+			name:     "gEmInI-lItE becomes gemini-2.5-flash-lite",
+			input:    "gEmInI-lItE",
+			expected: "gemini-2.5-flash-lite",
 		},
 		// Models without pro or flash stay unchanged
 		{
@@ -106,6 +137,11 @@ func TestNormalizeModelName(t *testing.T) {
 			name:     "model with flash in middle",
 			input:    "some-flash-model",
 			expected: "gemini-2.5-flash",
+		},
+		{
+			name:     "model with lite in middle",
+			input:    "some-lite-model",
+			expected: "gemini-2.5-flash-lite",
 		},
 		{
 			name:     "empty string stays unchanged",
