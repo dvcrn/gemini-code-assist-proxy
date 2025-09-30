@@ -64,6 +64,30 @@ func (c *Client) LoadCodeAssist() (*LoadCodeAssistResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request execution error: %w", err)
 	}
+
+	// Check for 401 Unauthorized and attempt a token refresh
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close() // Close the first response body
+
+		if err := c.provider.RefreshToken(); err != nil {
+			return nil, fmt.Errorf("failed to refresh token: %w", err)
+		}
+
+		// Reload credentials after refresh
+		refreshedCreds, err := c.provider.GetCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("failed to reload credentials after refresh: %w", err)
+		}
+
+		// Re-create the request with the new token
+		req.Header.Set("Authorization", "Bearer "+refreshedCreds.AccessToken)
+
+		// Retry the request
+		resp, err = c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("request execution error after refresh: %w", err)
+		}
+	}
 	defer resp.Body.Close()
 
 	respBody, err := ioutil.ReadAll(resp.Body)

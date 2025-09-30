@@ -647,7 +647,6 @@ func (s *Server) startTokenRefreshLoop() {
 	}()
 }
 
-
 // setupRoutes configures all HTTP routes
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/admin/credentials", s.adminMiddleware(s.credentialsHandler))
