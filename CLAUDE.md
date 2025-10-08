@@ -25,10 +25,13 @@ This is a Go proxy server that transforms standard Gemini API requests into Goog
 ### Core Components
 
 #### Server (`internal/server/`)
-- **server.go** - Main HTTP server with routing, middleware, and request handling
-- **transform.go** - Core transformation logic between Gemini API ↔ CloudCode API
-- **admin.go** - Admin API middleware for credential management (protected by ADMIN_API_KEY)
-- **http_client*.go** - HTTP client abstractions (separate Workers vs default implementations)
+- `server.go` - Main HTTP server with routing and request handling
+- `admin_middleware.go` - Admin API middleware (protected by `ADMIN_API_KEY`)
+- `chatCompletionsHandler.go` - OpenAI-compatible chat completions endpoint
+- `streamGenerateContentHandler.go` - Gemini streaming/non-streaming content endpoints
+- `modelsHandler.go` - OpenAI-style models listing/details endpoint
+- `gemini_helpers.go` - Shared helpers (model normalization, path parsing, SSE unwrap)
+- `http_client*.go` - HTTP client abstractions (separate Workers vs default implementations)
 
 #### Credentials (`internal/credentials/`)
 - **provider.go** - Interface for credential management
@@ -75,7 +78,7 @@ The codebase supports two deployment modes:
 - Environment variables handled through `internal/env` abstraction
 - Credential providers implement common interface for different storage backends
 - Server supports both regular JSON and SSE streaming responses
-- Middleware applied to all routes, including main proxy endpoint
+- Middleware applied to admin-protected routes (credentials, streaming, chat)
 
 ## Performance Considerations
 
