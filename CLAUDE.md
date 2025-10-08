@@ -27,9 +27,9 @@ This is a Go proxy server that transforms standard Gemini API requests into Goog
 #### Server (`internal/server/`)
 - `server.go` - Main HTTP server with routing and request handling
 - `admin_middleware.go` - Admin API middleware (protected by `ADMIN_API_KEY`)
-- `chatCompletionsHandler.go` - OpenAI-compatible chat completions endpoint
-- `streamGenerateContentHandler.go` - Gemini streaming/non-streaming content endpoints
-- `modelsHandler.go` - OpenAI-style models listing/details endpoint
+- `chat_completions_handler.go` - OpenAI-compatible chat completions endpoint
+- `stream_generate_content_handler.go` - Gemini streaming/non-streaming content endpoints
+- `models_handler.go` - OpenAI-style models listing/details endpoint
 - `gemini_helpers.go` - Shared helpers (model normalization, path parsing, SSE unwrap)
 - `http_client*.go` - HTTP client abstractions (separate Workers vs default implementations)
 
