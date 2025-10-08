@@ -1,5 +1,52 @@
 package gemini
 
+// ContentPart represents a single part of a content message.
+type ContentPart struct {
+	Text             string `json:"text,omitempty"`
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
+}
+
+// Content represents a single message in the chat history for Gemini.
+type Content struct {
+	Role  string        `json:"role"`
+	Parts []ContentPart `json:"parts"`
+}
+
+// SystemInstruction defines the system-level instructions for the model.
+type SystemInstruction struct {
+	Role  string        `json:"role"`
+	Parts []ContentPart `json:"parts"`
+}
+
+// JSONSchema represents a JSON schema.
+type JSONSchema map[string]interface{}
+
+// FunctionDeclaration defines a function that can be called by the model.
+type FunctionDeclaration struct {
+	Name                 string     `json:"name"`
+	Description          string     `json:"description"`
+	ParametersJsonSchema JSONSchema `json:"parametersJsonSchema"`
+}
+
+// Tool represents a collection of function declarations.
+type Tool struct {
+	FunctionDeclarations []FunctionDeclaration `json:"functionDeclarations"`
+}
+
+// ThinkingConfig configures the model's thinking process.
+type ThinkingConfig struct {
+	IncludeThoughts bool `json:"includeThoughts"`
+	ThinkingBudget  int  `json:"thinkingBudget"`
+}
+
+// GeminiGenerationConfig configures the generation process.
+type GeminiGenerationConfig struct {
+	Temperature     float64         `json:"temperature,omitempty"`
+	TopP            float64         `json:"topP,omitempty"`
+	ThinkingConfig  *ThinkingConfig `json:"thinkingConfig,omitempty"`
+	MaxOutputTokens int             `json:"maxOutputTokens,omitempty"`
+}
+
 // LoadCodeAssistRequest represents the request body for the loadCodeAssist endpoint.
 type LoadCodeAssistRequest struct {
 	Metadata Metadata `json:"metadata"`
@@ -33,12 +80,18 @@ type Tier struct {
 
 // GenerateContentRequest represents the request body for the generateContent endpoint.
 type GenerateContentRequest struct {
-	Model            string                 `json:"model"`
-	Project          string                 `json:"project"`
-	UserPromptID     string                 `json:"user_prompt_id,omitempty"`
-	Request          map[string]interface{} `json:"request"`
-	GenerationConfig map[string]interface{} `json:"generationConfig,omitempty"`
-	SessionID        string                 `json:"session_id,omitempty"`
+	Model        string                `json:"model"`
+	Project      string                `json:"project"`
+	UserPromptID string                `json:"user_prompt_id,omitempty"`
+	Request      GeminiInternalRequest `json:"request"`
+	SessionID    string                `json:"session_id,omitempty"`
+}
+
+type GeminiInternalRequest struct {
+	Contents          []Content               `json:"contents"`
+	SystemInstruction *SystemInstruction      `json:"systemInstruction,omitempty"`
+	Tools             []Tool                  `json:"tools,omitempty"`
+	GenerationConfig  *GeminiGenerationConfig `json:"generationConfig,omitempty"`
 }
 
 // GenerateContentResponse represents the response from the generateContent endpoint.

@@ -78,7 +78,7 @@ func (s *Server) handleGenerateContent(w http.ResponseWriter, r *http.Request, m
 	}
 	defer r.Body.Close()
 
-	var requestBody map[string]interface{}
+	var requestBody gemini.GeminiInternalRequest
 	if err := json.Unmarshal(body, &requestBody); err != nil {
 		logger.Get().Error().Err(err).Msg("Failed to parse request body")
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -142,7 +142,7 @@ func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Requ
 	}
 	defer r.Body.Close()
 
-	var requestBody map[string]interface{}
+	var requestBody gemini.GeminiInternalRequest
 	if err := json.Unmarshal(body, &requestBody); err != nil {
 		logger.Get().Error().Err(err).Msg("Failed to parse request body")
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -173,7 +173,7 @@ func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Requ
 	// Start upstream streaming and pipe raw lines
 	lines := make(chan string, 16)
 	apiCallStart := time.Now()
-	if err := s.geminiClient.StreamGenerateContent(genReq, lines); err != nil {
+	if err := s.geminiClient.StreamGenerateContent(r.Context(), genReq, lines); err != nil {
 		logger.Get().Error().
 			Err(err).
 			Str("model", model).
@@ -185,26 +185,54 @@ func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Requ
 
 	// Stream loop: transform data lines and forward to client
 	firstWrite := true
-	for line := range lines {
-		if firstWrite {
-			logger.Get().Info().
-				Dur("time_to_first_write", time.Since(startTime)).
-				Msg("First SSE data written to client (direct stream)")
-			firstWrite = false
-		}
-
-		// Transform CloudCode SSE line into standard Gemini format
-		transformed := TransformSSELine(line)
-
-		// Write transformed line and a newline; upstream blank lines will pass through too
-		if _, err := fmt.Fprintf(w, "%s\n", transformed); err != nil {
-			logger.Get().Error().Err(err).Msg("Error writing SSE line to client")
+	// Send SSE keepalives until first upstream byte to avoid idle timeouts
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+streamLoop:
+	for {
+		select {
+		case <-r.Context().Done():
+			logger.Get().Info().Msg("Client canceled SSE stream")
 			return
-		}
 
-		// Flush per line if supported
-		if flusher != nil {
-			flusher.Flush()
+		case line, ok := <-lines:
+			if !ok {
+				logger.Get().Info().Msg("Upstream stream ended")
+				break streamLoop
+			}
+			if firstWrite {
+				logger.Get().Info().
+					Dur("time_to_first_write", time.Since(startTime)).
+					Msg("First SSE data written to client (direct stream)")
+				firstWrite = false
+			}
+
+			// Transform CloudCode SSE line into standard Gemini format
+			transformed := TransformSSELine(line)
+
+			// Write transformed line and a newline; upstream blank lines will pass through too
+			if _, err := fmt.Fprintf(w, "%s\n", transformed); err != nil {
+				logger.Get().Error().Err(err).Msg("Error writing SSE line to client")
+				return
+			}
+
+			// Flush per line if supported
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+		case <-ticker.C:
+			if firstWrite {
+				// SSE comment keepalive to keep connection open
+				if _, err := io.WriteString(w, ":\n\n"); err != nil {
+					logger.Get().Error().Err(err).Msg("Error writing keepalive")
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+				logger.Get().Debug().Msg("Wrote SSE keepalive before first upstream byte")
+			}
 		}
 	}
 

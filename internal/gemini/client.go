@@ -3,6 +3,7 @@ package gemini
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/credentials"
 	serverhttp "github.com/dvcrn/gemini-code-assist-proxy/internal/http"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 )
 
 // Client is a client for the Gemini API.
@@ -185,7 +187,7 @@ func (c *Client) GenerateContent(req *GenerateContentRequest) (*GenerateContentR
 // StreamGenerateContent performs a streaming request and sends each raw SSE line to the provided channel.
 // It does not transform or interpret SSE content; lines are forwarded as-is.
 // The caller owns the lifecycle of the 'out' channel; this function will not close it.
-func (c *Client) StreamGenerateContent(req *GenerateContentRequest, out chan<- string) error {
+func (c *Client) StreamGenerateContent(ctx context.Context, req *GenerateContentRequest, out chan<- string) error {
 	creds, err := c.provider.GetCredentials()
 	if err != nil {
 		return fmt.Errorf("unable to get credentials: %w", err)
@@ -200,7 +202,7 @@ func (c *Client) StreamGenerateContent(req *GenerateContentRequest, out chan<- s
 		return fmt.Errorf("could not marshal request body: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/v1internal:streamGenerateContent?alt=sse", credentials.CodeAssistEndpoint), bytes.NewReader(bodyBytes))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/v1internal:streamGenerateContent?alt=sse", credentials.CodeAssistEndpoint), bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("could not create request: %w", err)
 	}
@@ -209,7 +211,7 @@ func (c *Client) StreamGenerateContent(req *GenerateContentRequest, out chan<- s
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("User-Agent", "GeminiCLI/v23.5.0 (darwin; arm64) google-api-nodejs-client/9.15.1")
 	httpReq.Header.Set("x-goog-api-client", "gl-node/23.5.0")
-	httpReq.Header.Set("Accept", "*/*")
+	httpReq.Header.Set("Accept", "text/event-stream")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -262,7 +264,9 @@ func (c *Client) StreamGenerateContent(req *GenerateContentRequest, out chan<- s
 		for scanner.Scan() {
 			out <- scanner.Text()
 		}
-		// scanner.Err() is intentionally ignored to keep this minimal per request
+		if err := scanner.Err(); err != nil {
+			logger.Get().Warn().Err(err).Msg("Upstream SSE scanner error")
+		}
 	}()
 
 	return nil
