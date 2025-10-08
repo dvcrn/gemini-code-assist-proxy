@@ -200,7 +200,7 @@ func (c *Client) StreamGenerateContent(req *GenerateContentRequest, out chan<- s
 		return fmt.Errorf("could not marshal request body: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/v1internal:streamGenerateContent", credentials.CodeAssistEndpoint), bytes.NewReader(bodyBytes))
+	httpReq, err := http.NewRequest("POST", fmt.Sprintf("%s/v1internal:streamGenerateContent?alt=sse", credentials.CodeAssistEndpoint), bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("could not create request: %w", err)
 	}
@@ -209,7 +209,7 @@ func (c *Client) StreamGenerateContent(req *GenerateContentRequest, out chan<- s
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("User-Agent", "GeminiCLI/v23.5.0 (darwin; arm64) google-api-nodejs-client/9.15.1")
 	httpReq.Header.Set("x-goog-api-client", "gl-node/23.5.0")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Accept", "*/*")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -253,6 +253,7 @@ func (c *Client) StreamGenerateContent(req *GenerateContentRequest, out chan<- s
 	// Start a goroutine to stream lines to the provided channel.
 	go func() {
 		defer resp.Body.Close()
+		defer close(out)
 
 		scanner := bufio.NewScanner(resp.Body)
 		// Increase the scanner buffer for large SSE events

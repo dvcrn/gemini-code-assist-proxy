@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
@@ -125,10 +126,97 @@ func (s *Server) handleGenerateContent(w http.ResponseWriter, r *http.Request, m
 }
 
 func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Request, model string) {
+	startTime := time.Now()
 	logger.Get().Info().
 		Str("model", model).
 		Msg("Handling streamGenerateContent")
 
-	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("streamGenerateContent - not yet implemented"))
+	// Read and parse request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Get().Error().Err(err).Msg("Failed to read request body")
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var requestBody map[string]interface{}
+	if err := json.Unmarshal(body, &requestBody); err != nil {
+		logger.Get().Error().Err(err).Msg("Failed to parse request body")
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Build CloudCode request wrapper
+	genReq := &gemini.GenerateContentRequest{
+		Model:   model,
+		Project: s.projectID,
+		Request: requestBody,
+	}
+
+	// Prepare SSE response headers
+	w.Header().Del("Content-Length")
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	// Detect flush capability and flush headers once
+	flusher, canFlush := w.(http.Flusher)
+	if canFlush {
+		flusher.Flush()
+	}
+
+	// Start upstream streaming and pipe raw lines
+	lines := make(chan string, 16)
+	apiCallStart := time.Now()
+	if err := s.geminiClient.StreamGenerateContent(genReq, lines); err != nil {
+		logger.Get().Error().
+			Err(err).
+			Str("model", model).
+			Dur("api_call_duration", time.Since(apiCallStart)).
+			Msg("StreamGenerateContent failed")
+		http.Error(w, fmt.Sprintf("Error calling StreamGenerateContent: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Stream loop: transform data lines and forward to client
+	firstWrite := true
+	for line := range lines {
+		if firstWrite {
+			logger.Get().Info().
+				Dur("time_to_first_write", time.Since(startTime)).
+				Msg("First SSE data written to client (direct stream)")
+			firstWrite = false
+		}
+
+		// Transform CloudCode SSE line into standard Gemini format
+		transformed := TransformSSELine(line)
+		isData := strings.HasPrefix(transformed, "data: ")
+
+		// Write line
+		if _, err := fmt.Fprintf(w, "%s\n", transformed); err != nil {
+			logger.Get().Error().Err(err).Msg("Error writing SSE line to client")
+			return
+		}
+
+		// For environments without flush support, ensure data events are separated by a blank line
+		if !canFlush && isData {
+			if _, err := fmt.Fprint(w, "\n"); err != nil {
+				logger.Get().Error().Err(err).Msg("Error writing SSE separator to client")
+				return
+			}
+		}
+
+		// Flush only when available and meaningful (data or empty line)
+		if canFlush && (isData || transformed == "") {
+			flusher.Flush()
+		}
+	}
+
+	logger.Get().Info().
+		Str("model", model).
+		Dur("total_duration", time.Since(startTime)).
+		Dur("api_call_duration", time.Since(apiCallStart)).
+		Msg("streamGenerateContent completed")
 }
