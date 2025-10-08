@@ -41,10 +41,7 @@ func Discover(provider credentials.CredentialsProvider, envProjectID string, loa
 func runOnboardingFlow(provider credentials.CredentialsProvider, loadResponse *gemini.LoadCodeAssistResponse) (string, error) {
 	discoveryStartTime := time.Now()
 
-	creds, err := provider.GetCredentials()
-	if err != nil {
-		return "", fmt.Errorf("OAuth credentials not loaded: %w", err)
-	}
+	// No need to get creds here anymore, callEndpoint will do it
 
 	if companionProject := loadResponse.CloudAICompanionProject; companionProject != "" {
 		logger.Get().Info().
@@ -88,7 +85,7 @@ func runOnboardingFlow(provider credentials.CredentialsProvider, loadResponse *g
 
 	// Initial onboarding call
 	onboardCallStart := time.Now()
-	lroResponse, err := callEndpoint(creds.AccessToken, "onboardUser", onboardRequest)
+	lroResponse, err := callEndpoint(provider, "onboardUser", onboardRequest)
 	if err != nil {
 		return "", fmt.Errorf("failed to call onboardUser: %w", err)
 	}
@@ -128,7 +125,7 @@ func runOnboardingFlow(provider credentials.CredentialsProvider, loadResponse *g
 		time.Sleep(2 * time.Second)
 
 		pollCallStart := time.Now()
-		lroResponse, err = callEndpoint(creds.AccessToken, "onboardUser", onboardRequest)
+		lroResponse, err = callEndpoint(provider, "onboardUser", onboardRequest)
 		if err != nil {
 			return "", fmt.Errorf("failed to poll onboardUser: %w", err)
 		}
@@ -139,7 +136,7 @@ func runOnboardingFlow(provider credentials.CredentialsProvider, loadResponse *g
 	}
 }
 
-func callEndpoint(accessToken, method string, body interface{}) (map[string]interface{}, error) {
+func callEndpoint(provider credentials.CredentialsProvider, method string, body interface{}) (map[string]interface{}, error) {
 	callStart := time.Now()
 	defer func() {
 		callDuration := time.Since(callStart)
@@ -148,6 +145,12 @@ func callEndpoint(accessToken, method string, body interface{}) (map[string]inte
 			Dur("endpoint_call_duration", callDuration).
 			Msg("Code Assist API call complete")
 	}()
+
+	creds, err := provider.GetCredentials()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get credentials: %w", err)
+	}
+	accessToken := creds.AccessToken
 
 	reqBody, err := json.Marshal(body)
 	if err != nil {
@@ -168,8 +171,30 @@ func callEndpoint(accessToken, method string, body interface{}) (map[string]inte
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	httpDuration := time.Since(httpStart)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		logger.Get().Info().Msg("Received 401 Unauthorized, attempting to refresh token...")
+		if err := provider.RefreshToken(); err != nil {
+			return nil, fmt.Errorf("failed to refresh token: %w", err)
+		}
+		refreshedCreds, err := provider.GetCredentials()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get credentials after refresh: %w", err)
+		}
+		accessToken = refreshedCreds.AccessToken
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+
+		// We need to re-create the body reader as it has been consumed
+		req.Body = ioutil.NopCloser(bytes.NewReader(reqBody))
+
+		resp, err = httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to make request after token refresh: %w", err)
+		}
+	}
+	defer resp.Body.Close()
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {

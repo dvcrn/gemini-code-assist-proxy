@@ -3,19 +3,19 @@
 ## Required Steps
 
 After making code changes, always run:
-- `just format` - Format Go code using goimports and gofumpt
-- `just test` - Run all tests to ensure nothing is broken
+- `mise run format` - Format Go code using goimports and gofumpt
+- `mise run test` - Run all tests to ensure nothing is broken
 
 ## Common Development Commands
 
 ### Building and Running
-- `just build` - Build the proxy binary for local use
-- `just run` - Run the proxy locally on port 9877
-- `just build-worker` - Build for Cloudflare Workers deployment
-- `just wrangler-dev` - Run local development server with Wrangler
+- `mise run build` - Build the proxy binary for local use
+- `mise run run` - Run the proxy locally on port 9877
+- `mise run build-worker` - Build for Cloudflare Workers deployment
+- `mise run wrangler-dev` - Run local development server with Wrangler
 
 ### Development
-- `just test` - Run all tests
+- `mise run test` - Run all tests
 - `go test ./internal/server -v` - Run specific package tests with verbose output
 
 ## High-Level Architecture
