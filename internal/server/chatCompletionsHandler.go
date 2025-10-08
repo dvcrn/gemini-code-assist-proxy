@@ -12,7 +12,9 @@ import (
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/transform"
 )
 
-// openAIChatCompletionsHandler handles OpenAI-compatible chat completion requests
+// openAIChatCompletionsHandler handles OpenAI-compatible chat completion requests.
+// It logs structured tool inputs/outputs and emits per-token SSE debug logs.
+// No client-specific normalization is applied; arguments are passed through as-is.
 func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	logger.Get().Info().
@@ -21,7 +23,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 		Time("start_time", startTime).
 		Msg("OpenAI chat completions request received")
 
-	// Read the request body
+	// Read body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.Get().Error().Err(err).Msg("Error reading request body")
@@ -30,7 +32,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 	}
 	defer r.Body.Close()
 
-	// Parse the request body
+	// Parse request
 	var req openai.ChatCompletionRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		logger.Get().Error().Err(err).Msg("Error parsing request body")
@@ -38,6 +40,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Request overview
 	logger.Get().Info().
 		Str("requested_model", req.Model).
 		Bool("stream", req.Stream).
@@ -45,14 +48,66 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 		Int("tools", len(req.Tools)).
 		Msg("Parsed OpenAI request")
 
-	// Require streaming mode for now
-	if !req.Stream {
-		logger.Get().Warn().Msg("Non-streaming OpenAI chat completion not supported yet")
-		http.Error(w, "Only stream=true is supported for this endpoint", http.StatusBadRequest)
+	// Log tool result messages present in the request (tool outputs from client)
+	toolMsgCount := 0
+	for i, m := range req.Messages {
+		if strings.ToLower(m.Role) != "tool" {
+			continue
+		}
+		toolMsgCount++
+
+		kind := "unknown"
+		var preview string
+		switch v := m.Content.(type) {
+		case string:
+			kind = "string"
+			preview = v
+		case []interface{}:
+			kind = "array"
+			var b strings.Builder
+			for _, part := range v {
+				if pm, ok := part.(map[string]interface{}); ok && pm["type"] == "text" {
+					if txt, ok := pm["text"].(string); ok && txt != "" {
+						if b.Len() > 0 {
+							b.WriteString("\n")
+						}
+						b.WriteString(txt)
+					}
+				}
+			}
+			preview = b.String()
+		default:
+			kind = "unknown"
+		}
+
+		if len(preview) > 300 {
+			preview = preview[:300] + "..."
+		}
+
+		logger.Get().Info().
+			Int("index", i).
+			Str("tool_call_id", m.ToolCallID).
+			Str("name", m.Name).
+			Str("content_kind", kind).
+			Int("content_len", len(preview)).
+			Str("content_preview", preview).
+			Msg("Tool result message received")
+	}
+	logger.Get().Debug().
+		Int("tool_messages", toolMsgCount).
+		Msg("Tool result message count")
+
+	// Delegate to stream or non-stream handler
+	if req.Stream {
+		s.chatCompletionRequestStream(w, r, req, startTime)
 		return
 	}
+	s.chatCompletionRequest(w, r, req, startTime)
+}
 
-	// Transform OpenAI request to Gemini request
+// chatCompletionRequestStream handles the streaming variant (existing behavior).
+func (s *Server) chatCompletionRequestStream(w http.ResponseWriter, r *http.Request, req openai.ChatCompletionRequest, startTime time.Time) {
+	// Transform OpenAI -> Gemini
 	gemReq, err := transform.ToGeminiRequest(&req, s.projectID)
 	if err != nil {
 		logger.Get().Error().Err(err).Msg("Failed to transform OpenAI request to Gemini request")
@@ -70,7 +125,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 			Msg("Normalized model for CloudCode")
 	}
 
-	// Prepare SSE response headers
+	// Prepare SSE response
 	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -99,7 +154,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 	}
 	logger.Get().Info().Msg("Upstream StreamGenerateContent started")
 
-	// Adapter: CloudCode SSE -> StreamChunk
+	// Adapter: CloudCode SSE -> StreamChunk (model text, tool calls, usage, etc.)
 	chunkIn := make(chan openai.StreamChunk, 32)
 	go func() {
 		defer close(chunkIn)
@@ -117,7 +172,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 				firstUpstream = false
 			}
 
-			// Normalize CloudCode 'response' wrapper first
+			// Transform CloudCode wrapper to standard Gemini-format event
 			transformed := TransformSSELine(line)
 			data := strings.TrimSpace(strings.TrimPrefix(transformed, "data: "))
 
@@ -127,11 +182,11 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 				break
 			}
 
-			// Try to parse JSON payload
+			// Parse JSON payload
 			var obj map[string]interface{}
 			if err := json.Unmarshal([]byte(data), &obj); err != nil {
-				logger.Get().Debug().Err(err).Msg("Failed to parse SSE JSON; forwarding as text")
 				// Fallback: forward as plain text chunk
+				logger.Get().Debug().Err(err).Msg("Failed to parse SSE JSON; forwarding as text")
 				chunkIn <- openai.StreamChunk{Type: "text", Data: data}
 				continue
 			}
@@ -158,7 +213,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 						chunkIn <- openai.StreamChunk{Type: "grounding_metadata", Data: gm}
 					}
 
-					// Find parts either under candidate.content.parts or candidate.parts
+					// Retrieve parts
 					var parts []interface{}
 					if content, ok := cand["content"].(map[string]interface{}); ok {
 						if ps, ok := content["parts"].([]interface{}); ok {
@@ -171,11 +226,15 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 						}
 					}
 
+					// Process parts
 					for _, p := range parts {
 						part, _ := p.(map[string]interface{})
 
-						// Text parts
+						// Text tokens — log per token at DEBUG
 						if txt, ok := part["text"].(string); ok && txt != "" {
+							logger.Get().Debug().
+								Str("token", txt).
+								Msg("SSE text token received")
 							chunkIn <- openai.StreamChunk{Type: "text", Data: txt}
 						}
 
@@ -184,7 +243,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 							rawName, _ := fc["name"].(string)
 							name := strings.TrimSpace(rawName)
 
-							// Robust args extraction: support args/argsJson/arguments/parameters (object or JSON string)
+							// Robust args extraction without client-specific normalization
 							var args map[string]interface{}
 							var source string
 							tryParse := func(val interface{}, key string) bool {
@@ -203,7 +262,6 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 								}
 								return false
 							}
-
 							if !tryParse(fc["args"], "args") &&
 								!tryParse(fc["argsJson"], "argsJson") &&
 								!tryParse(fc["arguments"], "arguments") &&
@@ -212,26 +270,22 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 								source = "default_empty"
 							}
 
-							// Normalize common file_path variants for Droid and other clients
-							if _, ok := args["file_path"]; !ok {
-								var candidate interface{}
-								for _, k := range []string{"filePath", "filepath", "path", "file", "filename", "file_name"} {
-									if v, ok := args[k]; ok {
-										candidate = v
-										break
-									}
-								}
-								if candidate != nil {
-									switch v := candidate.(type) {
-									case string:
-										args["file_path"] = v
-									default:
-										if b, err := json.Marshal(v); err == nil {
-											args["file_path"] = string(b)
-										}
-									}
-								}
+							// Log tool call inputs (preview at INFO, full JSON at DEBUG)
+							argsJSON, _ := json.Marshal(args)
+							argsPreview := string(argsJSON)
+							if len(argsPreview) > 300 {
+								argsPreview = argsPreview[:300] + "..."
 							}
+							logger.Get().Info().
+								Str("function", name).
+								Int("arg_keys", len(args)).
+								Str("args_preview", argsPreview).
+								Msg("Tool call inputs")
+							logger.Get().Debug().
+								Str("function", name).
+								RawJSON("args", argsJSON).
+								Str("args_source", source).
+								Msg("Tool call full args")
 
 							logger.Get().Info().
 								Str("function", name).
@@ -239,6 +293,7 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 								Int("arg_keys", len(args)).
 								Msg("Emitting tool call from model")
 
+							// Emit tool call to OpenAI transformer
 							chunkIn <- openai.StreamChunk{
 								Type: "tool_code",
 								Data: map[string]interface{}{
@@ -253,11 +308,10 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 		}
 	}()
 
-	// Transform chunks into OpenAI-compatible SSE
+	// Transform chunks into OpenAI-compatible SSE and stream to client
 	transformer := openai.CreateOpenAIStreamTransformer(req.Model)
 	out := transformer(chunkIn)
 
-	// Stream transformed SSE to client
 	firstWrite := true
 	for sse := range out {
 		if _, err := io.WriteString(w, sse); err != nil {
@@ -279,4 +333,118 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 		Str("model", gemReq.Model).
 		Dur("total_duration", time.Since(startTime)).
 		Msg("OpenAI streaming response completed")
+}
+
+// chatCompletionRequest handles the non-streaming variant via GenerateContent and returns OpenAI-style JSON.
+func (s *Server) chatCompletionRequest(w http.ResponseWriter, r *http.Request, req openai.ChatCompletionRequest, startTime time.Time) {
+	// Transform OpenAI -> Gemini
+	gemReq, err := transform.ToGeminiRequest(&req, s.projectID)
+	if err != nil {
+		logger.Get().Error().Err(err).Msg("Failed to transform OpenAI request to Gemini request")
+		http.Error(w, "Failed to transform request", http.StatusInternalServerError)
+		return
+	}
+
+	// Normalize model name
+	originalModel := gemReq.Model
+	gemReq.Model = normalizeModelName(gemReq.Model)
+	if gemReq.Model != originalModel {
+		logger.Get().Info().
+			Str("original_model", originalModel).
+			Str("normalized_model", gemReq.Model).
+			Msg("Normalized model for CloudCode")
+	}
+
+	// Call non-streaming GenerateContent
+	apiStart := time.Now()
+	resp, err := s.geminiClient.GenerateContent(gemReq)
+	if err != nil {
+		logger.Get().Error().Err(err).Dur("api_call_duration", time.Since(apiStart)).Msg("GenerateContent failed")
+		http.Error(w, "Error calling GenerateContent", http.StatusInternalServerError)
+		return
+	}
+
+	// Extract assistant text content from first candidate
+	var contentText string
+	if resp != nil && resp.Response != nil {
+		if cands, ok := resp.Response["candidates"].([]interface{}); ok && len(cands) > 0 {
+			if first, ok := cands[0].(map[string]interface{}); ok {
+				// parts may be under content.parts or parts
+				var parts []interface{}
+				if c, ok := first["content"].(map[string]interface{}); ok {
+					if ps, ok := c["parts"].([]interface{}); ok {
+						parts = ps
+					}
+				}
+				if len(parts) == 0 {
+					if ps, ok := first["parts"].([]interface{}); ok {
+						parts = ps
+					}
+				}
+				var b strings.Builder
+				for _, p := range parts {
+					if pm, ok := p.(map[string]interface{}); ok {
+						if txt, ok := pm["text"].(string); ok && txt != "" {
+							if b.Len() > 0 {
+								b.WriteString("\n")
+							}
+							b.WriteString(txt)
+						}
+					}
+				}
+				contentText = b.String()
+			}
+		}
+	}
+
+	// Build OpenAI-style response
+	created := time.Now().Unix()
+	openAIResp := map[string]interface{}{
+		"id":      "chatcmpl",
+		"object":  "chat.completion",
+		"created": created,
+		"model":   req.Model,
+		"choices": []map[string]interface{}{
+			{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": contentText,
+				},
+				"finish_reason": "stop",
+			},
+		},
+	}
+
+	// Include usage if available
+	if resp != nil && resp.Response != nil {
+		if um, ok := resp.Response["usageMetadata"].(map[string]interface{}); ok {
+			prompt := 0
+			comp := 0
+			if v, ok := um["promptTokenCount"].(float64); ok {
+				prompt = int(v)
+			}
+			if v, ok := um["candidatesTokenCount"].(float64); ok {
+				comp = int(v)
+			}
+			openAIResp["usage"] = map[string]interface{}{
+				"prompt_tokens":     prompt,
+				"completion_tokens": comp,
+				"total_tokens":      prompt + comp,
+			}
+		}
+	}
+
+	// Write response
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(openAIResp); err != nil {
+		logger.Get().Error().Err(err).Msg("Error writing non-streaming response")
+		return
+	}
+
+	logger.Get().Info().
+		Str("model", gemReq.Model).
+		Dur("api_call_duration", time.Since(apiStart)).
+		Dur("total_duration", time.Since(startTime)).
+		Msg("OpenAI non-streaming response completed")
 }

@@ -46,3 +46,28 @@ type Function struct {
 	Name        string      `json:"name"`
 	Parameters  interface{} `json:"parameters"`
 }
+
+// ChatCompletionResponse represents a response payload for OpenAI-compatible chat completion endpoints.
+// This is used for non-streaming responses.
+type ChatCompletionResponse struct {
+	ID      string   `json:"id"`
+	Object  string   `json:"object"`
+	Created int64    `json:"created"`
+	Model   string   `json:"model"`
+	Choices []Choice `json:"choices"`
+	Usage   Usage    `json:"usage"`
+}
+
+// Choice represents a single choice in a chat completion response.
+type Choice struct {
+	Index        int     `json:"index"`
+	Message      Message `json:"message"`
+	FinishReason string  `json:"finish_reason"`
+}
+
+// Usage represents the token usage for a request.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}

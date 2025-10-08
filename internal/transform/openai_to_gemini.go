@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/openai"
 )
 
@@ -116,6 +117,19 @@ func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents 
 				if resolvedName == "" {
 					return nil, nil, fmt.Errorf("tool response missing function name and unresolved tool_call_id")
 				}
+
+				// Log forwarding of tool response (string content) with preview
+				preview := content
+				if len(preview) > 300 {
+					preview = preview[:300] + "..."
+				}
+				logger.Get().Info().
+					Str("function", resolvedName).
+					Str("tool_call_id", msg.ToolCallID).
+					Int("response_len", len(content)).
+					Str("response_preview", preview).
+					Msg("Forwarding tool response to Gemini")
+
 				resp := map[string]interface{}{"output": content}
 				parts = append(parts, gemini.ContentPart{
 					FunctionResponse: &gemini.FunctionResponse{
@@ -148,7 +162,21 @@ func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents 
 				if resolvedName == "" {
 					return nil, nil, fmt.Errorf("tool response missing function name and unresolved tool_call_id")
 				}
-				resp := map[string]interface{}{"output": buf.String()}
+
+				// Log forwarding of tool response (aggregated text parts) with preview
+				full := buf.String()
+				preview := full
+				if len(preview) > 300 {
+					preview = preview[:300] + "..."
+				}
+				logger.Get().Info().
+					Str("function", resolvedName).
+					Str("tool_call_id", msg.ToolCallID).
+					Int("response_len", len(full)).
+					Str("response_preview", preview).
+					Msg("Forwarding tool response to Gemini")
+
+				resp := map[string]interface{}{"output": full}
 				parts = append(parts, gemini.ContentPart{
 					FunctionResponse: &gemini.FunctionResponse{
 						Name:     resolvedName,
