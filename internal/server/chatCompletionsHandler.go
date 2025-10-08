@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/openai"
@@ -13,7 +14,12 @@ import (
 
 // openAIChatCompletionsHandler handles OpenAI-compatible chat completion requests
 func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
-	logger.Get().Info().Msg("openAIChatCompletionsHandler called")
+	startTime := time.Now()
+	logger.Get().Info().
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Time("start_time", startTime).
+		Msg("OpenAI chat completions request received")
 
 	// Read the request body
 	body, err := io.ReadAll(r.Body)
@@ -32,6 +38,13 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	logger.Get().Info().
+		Str("requested_model", req.Model).
+		Bool("stream", req.Stream).
+		Int("messages", len(req.Messages)).
+		Int("tools", len(req.Tools)).
+		Msg("Parsed OpenAI request")
+
 	// Require streaming mode for now
 	if !req.Stream {
 		logger.Get().Warn().Msg("Non-streaming OpenAI chat completion not supported yet")
@@ -48,7 +61,14 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Normalize model name for CloudCode compatibility
+	originalModel := gemReq.Model
 	gemReq.Model = normalizeModelName(gemReq.Model)
+	if gemReq.Model != originalModel {
+		logger.Get().Info().
+			Str("original_model", originalModel).
+			Str("normalized_model", gemReq.Model).
+			Msg("Normalized model for CloudCode")
+	}
 
 	// Prepare SSE response headers
 	w.Header().Del("Content-Length")
@@ -62,24 +82,39 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 	if f, ok := w.(http.Flusher); ok {
 		flusher = f
 		flusher.Flush()
+		logger.Get().Debug().Msg("SSE headers flushed (flusher available)")
+	} else {
+		logger.Get().Info().Msg("SSE flusher not available; relying on implicit streaming")
 	}
 
 	// Start upstream streaming from Gemini
 	upstream := make(chan string, 32)
+	logger.Get().Info().
+		Str("model", gemReq.Model).
+		Msg("Starting upstream StreamGenerateContent")
 	if err := s.geminiClient.StreamGenerateContent(r.Context(), gemReq, upstream); err != nil {
 		logger.Get().Error().Err(err).Msg("StreamGenerateContent call failed")
 		http.Error(w, "Upstream streaming error", http.StatusInternalServerError)
 		return
 	}
+	logger.Get().Info().Msg("Upstream StreamGenerateContent started")
 
 	// Adapter: CloudCode SSE -> StreamChunk
 	chunkIn := make(chan openai.StreamChunk, 32)
 	go func() {
 		defer close(chunkIn)
+		firstUpstream := true
 		for line := range upstream {
 			// Process only data lines
 			if !strings.HasPrefix(line, "data: ") {
 				continue
+			}
+
+			if firstUpstream {
+				logger.Get().Info().
+					Dur("time_to_first_upstream_line", time.Since(startTime)).
+					Msg("First upstream SSE line received")
+				firstUpstream = false
 			}
 
 			// Normalize CloudCode 'response' wrapper first
@@ -88,12 +123,14 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 
 			// Handle upstream DONE
 			if data == "" || data == "[DONE]" || data == "\"[DONE]\"" {
+				logger.Get().Info().Msg("Received upstream DONE")
 				break
 			}
 
 			// Try to parse JSON payload
 			var obj map[string]interface{}
 			if err := json.Unmarshal([]byte(data), &obj); err != nil {
+				logger.Get().Debug().Err(err).Msg("Failed to parse SSE JSON; forwarding as text")
 				// Fallback: forward as plain text chunk
 				chunkIn <- openai.StreamChunk{Type: "text", Data: data}
 				continue
@@ -144,10 +181,14 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 
 						// Function call parts
 						if fc, ok := part["functionCall"].(map[string]interface{}); ok {
+							name, _ := fc["name"].(string)
+							logger.Get().Info().
+								Str("function", name).
+								Msg("Emitting tool call from model")
 							chunkIn <- openai.StreamChunk{
 								Type: "tool_code",
 								Data: map[string]interface{}{
-									"name": fc["name"],
+									"name": name,
 									"args": fc["args"],
 								},
 							}
@@ -163,13 +204,25 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 	out := transformer(chunkIn)
 
 	// Stream transformed SSE to client
+	firstWrite := true
 	for sse := range out {
 		if _, err := io.WriteString(w, sse); err != nil {
 			logger.Get().Error().Err(err).Msg("Error writing SSE to client")
 			return
 		}
+		if firstWrite {
+			logger.Get().Info().
+				Dur("time_to_first_client_write", time.Since(startTime)).
+				Msg("First OpenAI SSE chunk written to client")
+			firstWrite = false
+		}
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
+
+	logger.Get().Info().
+		Str("model", gemReq.Model).
+		Dur("total_duration", time.Since(startTime)).
+		Msg("OpenAI streaming response completed")
 }

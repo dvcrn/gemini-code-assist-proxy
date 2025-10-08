@@ -2,8 +2,10 @@ package gemini
 
 // ContentPart represents a single part of a content message.
 type ContentPart struct {
-	Text             string `json:"text,omitempty"`
-	ThoughtSignature string `json:"thoughtSignature,omitempty"`
+	Text             string            `json:"text,omitempty"`
+	ThoughtSignature string            `json:"thoughtSignature,omitempty"`
+	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
+	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
 }
 
 // Content represents a single message in the chat history for Gemini.
@@ -20,6 +22,18 @@ type SystemInstruction struct {
 
 // JSONSchema represents a JSON schema.
 type JSONSchema map[string]interface{}
+
+// FunctionCall represents a tool call emitted by the model.
+type FunctionCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args,omitempty"`
+}
+
+// FunctionResponse represents the tool result returned by the client.
+type FunctionResponse struct {
+	Name     string                 `json:"name"`
+	Response map[string]interface{} `json:"response,omitempty"`
+}
 
 // FunctionDeclaration defines a function that can be called by the model.
 type FunctionDeclaration struct {

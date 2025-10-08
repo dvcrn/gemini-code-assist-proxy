@@ -2,6 +2,7 @@ package transform
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/openai"
@@ -17,7 +18,8 @@ func ToGeminiRequest(openAIReq *openai.ChatCompletionRequest, projectID string) 
 		return nil, fmt.Errorf("failed to convert messages: %w", err)
 	}
 
-	// TODO: Handle tools
+	// Handle tools
+	geminiTools := convertToolsToGeminiTools(openAIReq.Tools)
 
 	// Handle generation config
 	var genCfg *gemini.GeminiGenerationConfig
@@ -31,6 +33,7 @@ func ToGeminiRequest(openAIReq *openai.ChatCompletionRequest, projectID string) 
 	internalReq = gemini.GeminiInternalRequest{
 		Contents:          geminiContents,
 		SystemInstruction: systemInstruction,
+		Tools:             geminiTools,
 		GenerationConfig:  genCfg,
 	}
 
@@ -100,4 +103,36 @@ func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents 
 	}
 
 	return geminiContents, systemInstruction, nil
+}
+
+func convertToolsToGeminiTools(tools []openai.Tool) []gemini.Tool {
+	if len(tools) == 0 {
+		return nil
+	}
+
+	var fns []gemini.FunctionDeclaration
+	for _, t := range tools {
+		if strings.ToLower(t.Type) != "function" {
+			continue
+		}
+
+		var schema gemini.JSONSchema
+		if m, ok := t.Function.Parameters.(map[string]interface{}); ok {
+			schema = m
+		}
+
+		fns = append(fns, gemini.FunctionDeclaration{
+			Name:                 t.Function.Name,
+			Description:          t.Function.Description,
+			ParametersJsonSchema: schema,
+		})
+	}
+
+	if len(fns) == 0 {
+		return nil
+	}
+
+	return []gemini.Tool{
+		{FunctionDeclarations: fns},
+	}
 }
