@@ -181,15 +181,69 @@ func (s *Server) openAIChatCompletionsHandler(w http.ResponseWriter, r *http.Req
 
 						// Function call parts
 						if fc, ok := part["functionCall"].(map[string]interface{}); ok {
-							name, _ := fc["name"].(string)
+							rawName, _ := fc["name"].(string)
+							name := strings.TrimSpace(rawName)
+
+							// Robust args extraction: support args/argsJson/arguments/parameters (object or JSON string)
+							var args map[string]interface{}
+							var source string
+							tryParse := func(val interface{}, key string) bool {
+								switch v := val.(type) {
+								case map[string]interface{}:
+									args = v
+									source = key
+									return true
+								case string:
+									var m map[string]interface{}
+									if err := json.Unmarshal([]byte(v), &m); err == nil {
+										args = m
+										source = key + " (json)"
+										return true
+									}
+								}
+								return false
+							}
+
+							if !tryParse(fc["args"], "args") &&
+								!tryParse(fc["argsJson"], "argsJson") &&
+								!tryParse(fc["arguments"], "arguments") &&
+								!tryParse(fc["parameters"], "parameters") {
+								args = map[string]interface{}{}
+								source = "default_empty"
+							}
+
+							// Normalize common file_path variants for Droid and other clients
+							if _, ok := args["file_path"]; !ok {
+								var candidate interface{}
+								for _, k := range []string{"filePath", "filepath", "path", "file", "filename", "file_name"} {
+									if v, ok := args[k]; ok {
+										candidate = v
+										break
+									}
+								}
+								if candidate != nil {
+									switch v := candidate.(type) {
+									case string:
+										args["file_path"] = v
+									default:
+										if b, err := json.Marshal(v); err == nil {
+											args["file_path"] = string(b)
+										}
+									}
+								}
+							}
+
 							logger.Get().Info().
 								Str("function", name).
+								Str("args_source", source).
+								Int("arg_keys", len(args)).
 								Msg("Emitting tool call from model")
+
 							chunkIn <- openai.StreamChunk{
 								Type: "tool_code",
 								Data: map[string]interface{}{
 									"name": name,
-									"args": fc["args"],
+									"args": args,
 								},
 							}
 						}
