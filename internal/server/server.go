@@ -14,25 +14,29 @@ import (
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/credentials"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/env"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
+	serverhttp "github.com/dvcrn/gemini-code-assist-proxy/internal/http"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 )
 
 // Server represents the proxy server with its dependencies
 type Server struct {
-	httpClient HTTPClient
-	provider   credentials.CredentialsProvider
-	oauthCreds *credentials.OAuthCredentials
-	projectID  string
-	mux        *http.ServeMux
+	httpClient   serverhttp.HTTPClient
+	provider     credentials.CredentialsProvider
+	oauthCreds   *credentials.OAuthCredentials
+	projectID    string
+	mux          *http.ServeMux
+	geminiClient *gemini.Client
 }
 
 // NewServer creates a new server instance with the given credentials provider
 func NewServer(provider credentials.CredentialsProvider, projectID string) *Server {
 	s := &Server{
-		httpClient: NewHTTPClient(),
-		provider:   provider,
-		projectID:  projectID,
-		mux:        http.NewServeMux(),
+		httpClient:   serverhttp.NewHTTPClient(),
+		provider:     provider,
+		projectID:    projectID,
+		mux:          http.NewServeMux(),
+		geminiClient: gemini.NewClient(provider),
 	}
 	s.setupRoutes()
 

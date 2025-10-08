@@ -30,3 +30,18 @@ type Tier struct {
 	PrivacyNotice                      map[string]interface{} `json:"privacyNotice"`
 	IsDefault                          bool                   `json:"isDefault,omitempty"`
 }
+
+// GenerateContentRequest represents the request body for the generateContent endpoint.
+type GenerateContentRequest struct {
+	Model            string                 `json:"model"`
+	Project          string                 `json:"project"`
+	UserPromptID     string                 `json:"user_prompt_id,omitempty"`
+	Request          map[string]interface{} `json:"request"`
+	GenerationConfig map[string]interface{} `json:"generationConfig,omitempty"`
+	SessionID        string                 `json:"session_id,omitempty"`
+}
+
+// GenerateContentResponse represents the response from the generateContent endpoint.
+type GenerateContentResponse struct {
+	Response map[string]interface{} `json:"response"`
+}

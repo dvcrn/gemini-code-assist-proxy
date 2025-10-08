@@ -1,9 +1,13 @@
 package server
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 )
 
@@ -57,12 +61,67 @@ func (s *Server) streamGenerateContentHandler(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleGenerateContent(w http.ResponseWriter, r *http.Request, model string) {
+	startTime := time.Now()
+
 	logger.Get().Info().
 		Str("model", model).
 		Msg("Handling generateContent")
 
-	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("generateContent - not yet implemented"))
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Get().Error().Err(err).Msg("Failed to read request body")
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var requestBody map[string]interface{}
+	if err := json.Unmarshal(body, &requestBody); err != nil {
+		logger.Get().Error().Err(err).Msg("Failed to parse request body")
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	logger.Get().Debug().
+		Str("model", model).
+		Int("body_size", len(body)).
+		Msg("Calling gemini client GenerateContent")
+
+	genReq := &gemini.GenerateContentRequest{
+		Model:   model,
+		Project: s.projectID,
+		Request: requestBody,
+	}
+
+	apiCallStart := time.Now()
+	resp, err := s.geminiClient.GenerateContent(genReq)
+	if err != nil {
+		logger.Get().Error().
+			Err(err).
+			Str("model", model).
+			Dur("api_call_duration", time.Since(apiCallStart)).
+			Msg("GenerateContent failed")
+		http.Error(w, fmt.Sprintf("Error calling GenerateContent: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	logger.Get().Debug().
+		Dur("api_call_duration", time.Since(apiCallStart)).
+		Msg("GenerateContent successful")
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(resp.Response); err != nil {
+		logger.Get().Error().Err(err).Msg("Failed to encode response")
+		return
+	}
+
+	logger.Get().Info().
+		Str("model", model).
+		Dur("total_duration", time.Since(startTime)).
+		Dur("api_call_duration", time.Since(apiCallStart)).
+		Msg("generateContent completed")
 }
 
 func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Request, model string) {

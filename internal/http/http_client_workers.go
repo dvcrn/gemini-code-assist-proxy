@@ -1,6 +1,6 @@
 //go:build js && wasm
 
-package server
+package http
 
 import (
 	"net/http"
