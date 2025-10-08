@@ -1,6 +1,7 @@
 package transform
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -49,6 +50,18 @@ func ToGeminiRequest(openAIReq *openai.ChatCompletionRequest, projectID string) 
 // convertMessagesToGeminiContents converts OpenAI messages to Gemini's content format.
 // It also extracts the system message as a separate systemInstruction.
 func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents []gemini.Content, systemInstruction *gemini.SystemInstruction, err error) {
+	// Build tool_call_id -> function name map from assistant tool calls
+	toolCallNameByID := map[string]string{}
+	for _, m := range messages {
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			for _, tc := range m.ToolCalls {
+				if tc.ID != "" && tc.Function.Name != "" {
+					toolCallNameByID[tc.ID] = tc.Function.Name
+				}
+			}
+		}
+	}
+
 	for _, msg := range messages {
 		if msg.Role == "system" {
 			// Allow multiple system messages by concatenating their parts
@@ -93,18 +106,83 @@ func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents 
 		var parts []gemini.ContentPart
 		switch content := msg.Content.(type) {
 		case string:
-			parts = append(parts, gemini.ContentPart{Text: content})
-		case []interface{}:
-			for _, part := range content {
-				if p, ok := part.(map[string]interface{}); ok && p["type"] == "text" {
-					if txt, ok2 := p["text"].(string); ok2 {
-						parts = append(parts, gemini.ContentPart{Text: txt})
+			if msg.Role == "tool" {
+				resolvedName := msg.Name
+				if resolvedName == "" && msg.ToolCallID != "" {
+					if n, ok := toolCallNameByID[msg.ToolCallID]; ok {
+						resolvedName = n
 					}
 				}
-				// TODO: Handle other part types like images
+				if resolvedName == "" {
+					return nil, nil, fmt.Errorf("tool response missing function name and unresolved tool_call_id")
+				}
+				resp := map[string]interface{}{"output": content}
+				parts = append(parts, gemini.ContentPart{
+					FunctionResponse: &gemini.FunctionResponse{
+						Name:     resolvedName,
+						Response: resp,
+					},
+				})
+			} else {
+				parts = append(parts, gemini.ContentPart{Text: content})
+			}
+		case []interface{}:
+			if msg.Role == "tool" {
+				var buf strings.Builder
+				for _, part := range content {
+					if p, ok := part.(map[string]interface{}); ok && p["type"] == "text" {
+						if txt, ok2 := p["text"].(string); ok2 && txt != "" {
+							if buf.Len() > 0 {
+								buf.WriteString("\n")
+							}
+							buf.WriteString(txt)
+						}
+					}
+				}
+				resolvedName := msg.Name
+				if resolvedName == "" && msg.ToolCallID != "" {
+					if n, ok := toolCallNameByID[msg.ToolCallID]; ok {
+						resolvedName = n
+					}
+				}
+				if resolvedName == "" {
+					return nil, nil, fmt.Errorf("tool response missing function name and unresolved tool_call_id")
+				}
+				resp := map[string]interface{}{"output": buf.String()}
+				parts = append(parts, gemini.ContentPart{
+					FunctionResponse: &gemini.FunctionResponse{
+						Name:     resolvedName,
+						Response: resp,
+					},
+				})
+			} else {
+				for _, part := range content {
+					if p, ok := part.(map[string]interface{}); ok && p["type"] == "text" {
+						if txt, ok2 := p["text"].(string); ok2 {
+							parts = append(parts, gemini.ContentPart{Text: txt})
+						}
+					}
+					// TODO: Handle other part types like images
+				}
 			}
 		default:
 			// Ignore unsupported content types for now
+		}
+
+		// Map assistant tool calls to functionCall parts
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+					args = map[string]interface{}{}
+				}
+				parts = append(parts, gemini.ContentPart{
+					FunctionCall: &gemini.FunctionCall{
+						Name: tc.Function.Name,
+						Args: args,
+					},
+				})
+			}
 		}
 
 		if len(parts) > 0 {
