@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/env"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/logger"
 )
 
@@ -95,4 +96,26 @@ func TransformSSELine(line string) string {
 	}
 
 	return "data: " + string(transformedJSON)
+}
+
+// sanitizeGeminiRequest: minimal shape fixes for CloudCode.
+// - Force systemInstruction.role = "system"
+// - Strip thinkingConfig entirely (CloudCode doesn't accept it)
+func sanitizeGeminiRequest(r *gemini.GeminiInternalRequest, model string) {
+	if r == nil {
+		return
+	}
+	// Default missing systemInstruction role
+	if r.SystemInstruction != nil {
+		// CloudCode expects 'system' here; enforce it
+		if strings.TrimSpace(r.SystemInstruction.Role) != "system" {
+			r.SystemInstruction.Role = "system"
+			logger.Get().Debug().Msg("Normalized systemInstruction.role to 'system'")
+		}
+	}
+	// Strip thinkingConfig entirely for CloudCode compatibility
+	if r.GenerationConfig != nil && r.GenerationConfig.ThinkingConfig != nil {
+		r.GenerationConfig.ThinkingConfig = nil
+		logger.Get().Debug().Msg("Removed thinkingConfig for CloudCode compatibility")
+	}
 }

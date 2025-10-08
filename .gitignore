@@ -9,3 +9,4 @@ node_modules
 build/
 com.gemini-proxy.plist
 /gemini-code-assist-proxy
+.gocache

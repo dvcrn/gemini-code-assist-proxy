@@ -85,6 +85,9 @@ func (s *Server) handleGenerateContent(w http.ResponseWriter, r *http.Request, m
 		return
 	}
 
+	// Sanitize request for CloudCode compatibility
+	sanitizeGeminiRequest(&requestBody, model)
+
 	logger.Get().Debug().
 		Str("model", model).
 		Int("body_size", len(body)).
@@ -149,6 +152,9 @@ func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Sanitize request for CloudCode compatibility
+	sanitizeGeminiRequest(&requestBody, model)
+
 	// Build CloudCode request wrapper
 	genReq := &gemini.GenerateContentRequest{
 		Model:   model,
@@ -179,7 +185,74 @@ func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Requ
 			Str("model", model).
 			Dur("api_call_duration", time.Since(apiCallStart)).
 			Msg("StreamGenerateContent failed")
-		http.Error(w, fmt.Sprintf("Error calling StreamGenerateContent: %v", err), http.StatusInternalServerError)
+		// Emit concise request summary to aid debugging without flooding logs
+		req := genReq.Request
+		totalTextChars := 0
+		maxContentChars := 0
+		userMsgs := 0
+		modelMsgs := 0
+		for _, c := range req.Contents {
+			if c.Role == "user" {
+				userMsgs++
+			} else if c.Role == "model" {
+				modelMsgs++
+			}
+			contentChars := 0
+			for _, p := range c.Parts {
+				if p.Text != "" {
+					l := len(p.Text)
+					totalTextChars += l
+					contentChars += l
+				}
+			}
+			if contentChars > maxContentChars {
+				maxContentChars = contentChars
+			}
+		}
+		sysParts := 0
+		sysChars := 0
+		if req.SystemInstruction != nil {
+			sysParts = len(req.SystemInstruction.Parts)
+			for _, p := range req.SystemInstruction.Parts {
+				if p.Text != "" {
+					sysChars += len(p.Text)
+				}
+			}
+		}
+		fnDecls := 0
+		for _, t := range req.Tools {
+			fnDecls += len(t.FunctionDeclarations)
+		}
+		maxTok := 0
+		if req.GenerationConfig != nil {
+			maxTok = req.GenerationConfig.MaxOutputTokens
+		}
+		logger.Get().Debug().
+			Str("model", model).
+			Int("contents", len(req.Contents)).
+			Int("user_messages", userMsgs).
+			Int("model_messages", modelMsgs).
+			Int("total_text_chars", totalTextChars).
+			Int("max_content_chars", maxContentChars).
+			Int("system_parts", sysParts).
+			Int("system_chars", sysChars).
+			Int("tools", len(req.Tools)).
+			Int("function_declarations", fnDecls).
+			Int("max_output_tokens", maxTok).
+			Msg("Upstream request summary (on error)")
+		// We already wrote SSE headers; emit an SSE-formatted error payload instead of resetting headers.
+		errPayload := map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": err.Error(),
+			},
+		}
+		if b, mErr := json.Marshal(errPayload); mErr == nil {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", string(b))
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
 		return
 	}
 

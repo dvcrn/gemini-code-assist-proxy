@@ -159,6 +159,7 @@ func (s *Server) chatCompletionRequestStream(w http.ResponseWriter, r *http.Requ
 	go func() {
 		defer close(chunkIn)
 		firstUpstream := true
+		firstThoughtSeen := false
 		for line := range upstream {
 			// Process only data lines
 			if !strings.HasPrefix(line, "data: ") {
@@ -229,6 +230,29 @@ func (s *Server) chatCompletionRequestStream(w http.ResponseWriter, r *http.Requ
 					// Process parts
 					for _, p := range parts {
 						part, _ := p.(map[string]interface{})
+
+						// Thought tokens (reasoning) — map to OpenAI reasoning stream
+						if isThought, ok := part["thought"].(bool); ok && isThought {
+							if txt, ok := part["text"].(string); ok && txt != "" {
+								if !firstThoughtSeen {
+									preview := txt
+									if len(preview) > 300 {
+										preview = preview[:300] + "..."
+									}
+									logger.Get().Info().
+										Int("len", len(txt)).
+										Str("preview", preview).
+										Msg("Streaming thinking tokens detected")
+									firstThoughtSeen = true
+								}
+								logger.Get().Debug().
+									Str("token", txt).
+									Msg("SSE thought token received")
+								chunkIn <- openai.StreamChunk{Type: "real_thinking", Data: txt}
+							}
+							// Skip normal text handling to avoid duplicating this token
+							continue
+						}
 
 						// Text tokens — log per token at DEBUG
 						if txt, ok := part["text"].(string); ok && txt != "" {

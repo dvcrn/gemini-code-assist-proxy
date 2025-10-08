@@ -242,13 +242,30 @@ func (c *Client) StreamGenerateContent(ctx context.Context, req *GenerateContent
 		}
 	}
 
-	// Non-OK status: read body and return error
+	// Non-OK status: read body and return error (with concise debug logs)
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, readErr := ioutil.ReadAll(resp.Body)
 		if readErr != nil {
 			return fmt.Errorf("streamGenerateContent failed with status %d and read error: %v", resp.StatusCode, readErr)
 		}
+		// Log truncated previews to avoid flooding logs
+		const maxPreview = 1024
+		rprev := string(respBody)
+		if len(rprev) > maxPreview {
+			rprev = rprev[:maxPreview] + "..."
+		}
+		qprev := string(bodyBytes)
+		if len(qprev) > maxPreview {
+			qprev = qprev[:maxPreview] + "..."
+		}
+		logger.Get().Error().
+			Int("status", resp.StatusCode).
+			Int("response_body_len", len(respBody)).
+			Str("response_body_preview", rprev).
+			Int("request_body_len", len(bodyBytes)).
+			Str("request_body_preview", qprev).
+			Msg("Upstream error on streamGenerateContent")
 		return fmt.Errorf("streamGenerateContent failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
