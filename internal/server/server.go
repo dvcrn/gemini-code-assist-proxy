@@ -651,6 +651,7 @@ func (s *Server) startTokenRefreshLoop() {
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/admin/credentials", s.adminMiddleware(s.credentialsHandler))
 	s.mux.HandleFunc("/admin/credentials/status", s.adminMiddleware(s.credentialsStatusHandler))
+	s.mux.HandleFunc("/v1beta/models/", s.adminMiddleware(s.streamGenerateContentHandler))
 	s.mux.HandleFunc("/", s.adminMiddleware(s.HandleProxyRequest))
 }
 
