@@ -53,6 +53,7 @@ func ToGeminiRequest(openAIReq *openai.ChatCompletionRequest, projectID string) 
 func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents []gemini.Content, systemInstruction *gemini.SystemInstruction, err error) {
 	// Build tool_call_id -> function name map from assistant tool calls
 	toolCallNameByID := map[string]string{}
+	var pendingToolParts []gemini.ContentPart
 	for _, m := range messages {
 		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
 			for _, tc := range m.ToolCalls {
@@ -213,6 +214,12 @@ func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents 
 			}
 		}
 
+		if strings.ToLower(msg.Role) == "tool" {
+			if len(parts) > 0 {
+				pendingToolParts = append(pendingToolParts, parts...)
+				parts = nil
+			}
+		}
 		if len(parts) > 0 {
 			geminiContents = append(geminiContents, gemini.Content{
 				Role:  role,
@@ -221,6 +228,12 @@ func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents 
 		}
 	}
 
+	if len(pendingToolParts) > 0 {
+		geminiContents = append(geminiContents, gemini.Content{
+			Role:  "user",
+			Parts: pendingToolParts,
+		})
+	}
 	return geminiContents, systemInstruction, nil
 }
 
