@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
@@ -17,11 +16,14 @@ func (s *Server) streamGenerateContentHandler(w http.ResponseWriter, r *http.Req
 
 	model, action := parseGeminiPath(r.URL.Path)
 
+	normalizedModel := normalizeModelName(model)
+
 	logger.Get().Info().
 		Str("method", r.Method).
 		Str("path", r.URL.Path).
 		Str("query", r.URL.RawQuery).
-		Str("model", model).
+		Str("requested_model", model).
+		Str("normalized_model", normalizedModel).
 		Str("action", action).
 		Time("start_time", startTime).
 		Msg("Gemini API request received")
@@ -42,10 +44,10 @@ func (s *Server) streamGenerateContentHandler(w http.ResponseWriter, r *http.Req
 
 	switch action {
 	case "streamGenerateContent":
-		s.handleStreamGenerateContent(w, r, model)
+		s.handleStreamGenerateContent(w, r, normalizedModel)
 
 	case "generateContent":
-		s.handleGenerateContent(w, r, model)
+		s.handleGenerateContent(w, r, normalizedModel)
 
 	default:
 		logger.Get().Warn().
@@ -161,9 +163,10 @@ func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	// Detect flush capability and flush headers once
-	flusher, canFlush := w.(http.Flusher)
-	if canFlush {
+	// Flush headers if supported
+	var flusher http.Flusher
+	if f, ok := w.(http.Flusher); ok {
+		flusher = f
 		flusher.Flush()
 	}
 
@@ -192,24 +195,15 @@ func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Requ
 
 		// Transform CloudCode SSE line into standard Gemini format
 		transformed := TransformSSELine(line)
-		isData := strings.HasPrefix(transformed, "data: ")
 
-		// Write line
+		// Write transformed line and a newline; upstream blank lines will pass through too
 		if _, err := fmt.Fprintf(w, "%s\n", transformed); err != nil {
 			logger.Get().Error().Err(err).Msg("Error writing SSE line to client")
 			return
 		}
 
-		// For environments without flush support, ensure data events are separated by a blank line
-		if !canFlush && isData {
-			if _, err := fmt.Fprint(w, "\n"); err != nil {
-				logger.Get().Error().Err(err).Msg("Error writing SSE separator to client")
-				return
-			}
-		}
-
-		// Flush only when available and meaningful (data or empty line)
-		if canFlush && (isData || transformed == "") {
+		// Flush per line if supported
+		if flusher != nil {
 			flusher.Flush()
 		}
 	}
