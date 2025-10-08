@@ -51,17 +51,30 @@ func ToGeminiRequest(openAIReq *openai.ChatCompletionRequest, projectID string) 
 func convertMessagesToGeminiContents(messages []openai.Message) (geminiContents []gemini.Content, systemInstruction *gemini.SystemInstruction, err error) {
 	for _, msg := range messages {
 		if msg.Role == "system" {
-			if systemInstruction != nil {
-				return nil, nil, fmt.Errorf("multiple system messages are not supported")
+			// Allow multiple system messages by concatenating their parts
+			if systemInstruction == nil {
+				systemInstruction = &gemini.SystemInstruction{
+					Role:  "system",
+					Parts: []gemini.ContentPart{},
+				}
 			}
 
 			switch content := msg.Content.(type) {
 			case string:
-				systemInstruction = &gemini.SystemInstruction{
-					Parts: []gemini.ContentPart{{Text: content}},
+				if content != "" {
+					systemInstruction.Parts = append(systemInstruction.Parts, gemini.ContentPart{Text: content})
+				}
+			case []interface{}:
+				// Support array content for system messages (e.g., [{"type":"text","text":"..."}])
+				for _, part := range content {
+					if p, ok := part.(map[string]interface{}); ok && p["type"] == "text" {
+						if txt, ok2 := p["text"].(string); ok2 && txt != "" {
+							systemInstruction.Parts = append(systemInstruction.Parts, gemini.ContentPart{Text: txt})
+						}
+					}
 				}
 			default:
-				return nil, nil, fmt.Errorf("unsupported system message content type: %T", msg.Content)
+				// Ignore unsupported content types for system messages
 			}
 			continue // System message is not part of contents
 		}
