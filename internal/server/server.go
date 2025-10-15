@@ -48,7 +48,7 @@ func (s *Server) Start(addr string) error {
 	s.startTokenRefreshLoop()
 
 	logger.Get().Info().Msgf("Starting proxy server on %s", addr)
-	return http.ListenAndServe(addr, s.mux)
+	return http.ListenAndServe(addr, loggingMiddleware(s.mux))
 }
 
 // LoadCredentials loads OAuth credentials using the configured provider
@@ -123,6 +123,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/admin/credentials/status", s.adminMiddleware(s.credentialsStatusHandler))
 	s.mux.HandleFunc("/v1beta/models/", s.adminMiddleware(s.streamGenerateContentHandler))
 	s.mux.HandleFunc("/v1/models/", s.modelsHandler)
+	s.mux.HandleFunc("/v1/models", s.modelsHandler)
 	s.mux.HandleFunc("/v1/chat/completions", s.adminMiddleware(s.openAIChatCompletionsHandler))
 }
 
