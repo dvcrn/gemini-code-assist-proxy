@@ -30,3 +30,6 @@ run = [
 [tasks."wrangler-dev"]
 description = "Run wrangler dev"
 run = "bunx wrangler dev"
+
+[tools]
+go = "latest"
