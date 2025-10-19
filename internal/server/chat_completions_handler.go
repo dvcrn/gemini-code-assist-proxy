@@ -117,12 +117,13 @@ func (s *Server) chatCompletionRequestStream(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Normalize model name for CloudCode compatibility
+	normalizedModelName := normalizeModelName(gemReq.Model)
 	originalModel := gemReq.Model
-	gemReq.Model = normalizeModelName(gemReq.Model)
+	gemReq.Model = normalizedModelName
 	if gemReq.Model != originalModel {
 		logger.Get().Info().
 			Str("original_model", originalModel).
-			Str("normalized_model", gemReq.Model).
+			Str("normalized_model", normalizedModelName).
 			Msg("Normalized model for CloudCode")
 	}
 
@@ -407,12 +408,13 @@ func (s *Server) chatCompletionRequest(w http.ResponseWriter, r *http.Request, r
 	}
 
 	// Normalize model name
+	normalizedModelName := normalizeModelName(gemReq.Model)
 	originalModel := gemReq.Model
-	gemReq.Model = normalizeModelName(gemReq.Model)
+	gemReq.Model = normalizedModelName
 	if gemReq.Model != originalModel {
 		logger.Get().Info().
 			Str("original_model", originalModel).
-			Str("normalized_model", gemReq.Model).
+			Str("normalized_model", normalizedModelName).
 			Msg("Normalized model for CloudCode")
 	}
 
