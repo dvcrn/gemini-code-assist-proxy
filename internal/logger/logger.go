@@ -44,6 +44,18 @@ func colorize(s interface{}, c int) string {
 func newLogger() *zerolog.Logger {
 	env := os.Getenv("ENV")
 
+	// Set log level based on LOG_LEVEL env var, default to info
+	logLevel := zerolog.InfoLevel
+	if levelStr := os.Getenv("LOG_LEVEL"); levelStr != "" {
+		if parsedLevel, err := zerolog.ParseLevel(strings.ToLower(levelStr)); err == nil {
+			logLevel = parsedLevel
+		} else {
+			fmt.Fprintf(os.Stderr, "Invalid LOG_LEVEL \"%s\"; defaulting to 'info'\n", levelStr)
+		}
+	}
+
+	zerolog.SetGlobalLevel(logLevel)
+
 	if env == "development" || env == "dev" || env == "" {
 		return newDevelopment()
 	}

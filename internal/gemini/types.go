@@ -24,8 +24,15 @@ type SystemInstruction struct {
 	Parts []ContentPart `json:"parts,omitempty"`
 }
 
-// JSONSchema represents a JSON schema.
-type JSONSchema map[string]interface{}
+// GeminiParameterSchema defines the proprietary schema format for Gemini function parameters.
+type GeminiParameterSchema struct {
+	Type        string                           `json:"type,omitempty"`
+	Description string                           `json:"description,omitempty"`
+	Properties  map[string]*GeminiParameterSchema `json:"properties,omitempty"`
+	Items       *GeminiParameterSchema           `json:"items,omitempty"`
+	Required    []string                         `json:"required,omitempty"`
+	Enum        []string                         `json:"enum,omitempty"`
+}
 
 // FunctionCall represents a tool call emitted by the model.
 type FunctionCall struct {
@@ -41,9 +48,9 @@ type FunctionResponse struct {
 
 // FunctionDeclaration defines a function that can be called by the model.
 type FunctionDeclaration struct {
-	Name                 string     `json:"name,omitempty"`
-	Description          string     `json:"description,omitempty"`
-	ParametersJsonSchema JSONSchema `json:"parametersJsonSchema,omitempty"`
+	Name        string                 `json:"name,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  *GeminiParameterSchema `json:"parameters,omitempty"`
 }
 
 // UnmarshalJSON: accept parametersJsonSchema (camelCase) and parameters (snake_case).
@@ -54,7 +61,7 @@ func (f *FunctionDeclaration) UnmarshalJSON(b []byte) error {
 	var a alias
 	if err := json.Unmarshal(b, &a); err == nil {
 		*f = FunctionDeclaration(a)
-		if f.ParametersJsonSchema != nil {
+		if f.Parameters != nil {
 			return nil
 		}
 	}
@@ -70,17 +77,17 @@ func (f *FunctionDeclaration) UnmarshalJSON(b []byte) error {
 	}
 	// snake_case key used by generativelanguage public API
 	if v, ok := raw["parameters"]; ok {
-		var m map[string]interface{}
-		if err := json.Unmarshal(v, &m); err == nil {
-			f.ParametersJsonSchema = m
+		var schema GeminiParameterSchema
+		if err := json.Unmarshal(v, &schema); err == nil {
+			f.Parameters = &schema
 			return nil
 		}
 	}
 	// or explicit camelCase if present but empty earlier
-	if v, ok := raw["parametersJsonSchema"]; ok && f.ParametersJsonSchema == nil {
-		var m map[string]interface{}
-		if err := json.Unmarshal(v, &m); err == nil {
-			f.ParametersJsonSchema = m
+	if v, ok := raw["parametersJsonSchema"]; ok && f.Parameters == nil {
+		var schema GeminiParameterSchema
+		if err := json.Unmarshal(v, &schema); err == nil {
+			f.Parameters = &schema
 		}
 	}
 	return nil

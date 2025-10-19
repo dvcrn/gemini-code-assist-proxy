@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -147,6 +148,31 @@ func (s *Server) chatCompletionRequestStream(w http.ResponseWriter, r *http.Requ
 	logger.Get().Info().
 		Str("model", gemReq.Model).
 		Msg("Starting upstream StreamGenerateContent")
+
+	// Pinger to keep connection alive
+	pingerCtx, cancelPinger := context.WithCancel(r.Context())
+	defer cancelPinger()
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				logger.Get().Debug().Msg("Sending SSE ping to keep connection alive")
+				if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+					logger.Get().Warn().Err(err).Msg("Failed to write SSE ping")
+					return
+				}
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
+			case <-pingerCtx.Done():
+				return
+			}
+		}
+	}()
+
 	if err := s.geminiClient.StreamGenerateContent(r.Context(), gemReq, upstream); err != nil {
 		logger.Get().Error().Err(err).Msg("StreamGenerateContent call failed")
 		http.Error(w, "Upstream streaming error", http.StatusInternalServerError)
@@ -161,6 +187,9 @@ func (s *Server) chatCompletionRequestStream(w http.ResponseWriter, r *http.Requ
 		firstUpstream := true
 		firstThoughtSeen := false
 		for line := range upstream {
+			if firstUpstream {
+				cancelPinger() // Stop pinger on first data
+			}
 			// Process only data lines
 			if !strings.HasPrefix(line, "data: ") {
 				continue
@@ -207,7 +236,11 @@ func (s *Server) chatCompletionRequestStream(w http.ResponseWriter, r *http.Requ
 			// Extract candidate content parts
 			if cands, ok := obj["candidates"].([]interface{}); ok {
 				for _, c := range cands {
-					cand, _ := c.(map[string]interface{})
+					cand, ok := c.(map[string]interface{})
+					if !ok {
+						logger.Get().Warn().Interface("candidate", c).Msg("Skipping invalid candidate in Gemini stream")
+						continue
+					}
 
 					// Optional grounding metadata passthrough
 					if gm, ok := cand["groundingMetadata"]; ok && gm != nil {
@@ -229,7 +262,11 @@ func (s *Server) chatCompletionRequestStream(w http.ResponseWriter, r *http.Requ
 
 					// Process parts
 					for _, p := range parts {
-						part, _ := p.(map[string]interface{})
+						part, ok := p.(map[string]interface{})
+						if !ok {
+							logger.Get().Warn().Interface("part", p).Msg("Skipping invalid part in Gemini stream")
+							continue
+						}
 
 						// Thought tokens (reasoning) — map to OpenAI reasoning stream
 						if isThought, ok := part["thought"].(bool); ok && isThought {

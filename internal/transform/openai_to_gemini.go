@@ -248,16 +248,29 @@ func convertToolsToGeminiTools(tools []openai.Tool) []gemini.Tool {
 			continue
 		}
 
-		var schema gemini.JSONSchema
+		var geminiSchema *gemini.GeminiParameterSchema
 		if m, ok := t.Function.Parameters.(map[string]interface{}); ok {
-			schema = m
+			geminiSchema = convertToGeminiSchema(m)
 		}
 
-		fns = append(fns, gemini.FunctionDeclaration{
-			Name:                 t.Function.Name,
-			Description:          t.Function.Description,
-			ParametersJsonSchema: schema,
-		})
+		convertedFn := gemini.FunctionDeclaration{
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			Parameters:  geminiSchema,
+		}
+
+		// For specific tools, log the before and after transformation for debugging
+		if t.Function.Name == "Read" || t.Function.Name == "Edit" || t.Function.Name == "MultiEdit" {
+			originalJSON, _ := json.Marshal(t.Function)
+			convertedJSON, _ := json.Marshal(convertedFn)
+			logger.Get().Info().
+				Str("tool_name", t.Function.Name).
+				RawJSON("original_schema", originalJSON).
+				RawJSON("converted_schema", convertedJSON).
+				Msg("Dumping tool schema conversion from OpenAI to Gemini")
+		}
+
+		fns = append(fns, convertedFn)
 	}
 
 	if len(fns) == 0 {
@@ -267,4 +280,52 @@ func convertToolsToGeminiTools(tools []openai.Tool) []gemini.Tool {
 	return []gemini.Tool{
 		{FunctionDeclarations: fns},
 	}
+}
+
+// convertToGeminiSchema recursively converts a generic map representing a JSON schema
+// into the strongly-typed GeminiParameterSchema struct, only mapping supported fields.
+func convertToGeminiSchema(input map[string]interface{}) *gemini.GeminiParameterSchema {
+	if input == nil {
+		return nil
+	}
+
+	output := &gemini.GeminiParameterSchema{}
+
+	if t, ok := input["type"].(string); ok {
+		output.Type = strings.ToUpper(t)
+	}
+	if d, ok := input["description"].(string); ok {
+		output.Description = d
+	}
+
+	if r, ok := input["required"].([]interface{}); ok {
+		for _, v := range r {
+			if s, ok := v.(string); ok {
+				output.Required = append(output.Required, s)
+			}
+		}
+	}
+
+	if e, ok := input["enum"].([]interface{}); ok {
+		for _, v := range e {
+			if s, ok := v.(string); ok {
+				output.Enum = append(output.Enum, s)
+			}
+		}
+	}
+
+	if p, ok := input["properties"].(map[string]interface{}); ok {
+		output.Properties = make(map[string]*gemini.GeminiParameterSchema)
+		for k, v := range p {
+			if vMap, ok := v.(map[string]interface{}); ok {
+				output.Properties[k] = convertToGeminiSchema(vMap)
+			}
+		}
+	}
+
+	if i, ok := input["items"].(map[string]interface{}); ok {
+		output.Items = convertToGeminiSchema(i)
+	}
+
+	return output
 }
