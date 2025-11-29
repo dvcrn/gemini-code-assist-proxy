@@ -14,4 +14,4 @@ ENV = "prod" # or prod
 DEBUG_SSE = "true"
 
 [build]
-command = "just build-worker"
+command = "mise run build-worker"

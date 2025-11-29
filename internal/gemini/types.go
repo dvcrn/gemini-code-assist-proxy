@@ -26,12 +26,12 @@ type SystemInstruction struct {
 
 // GeminiParameterSchema defines the proprietary schema format for Gemini function parameters.
 type GeminiParameterSchema struct {
-	Type        string                           `json:"type,omitempty"`
-	Description string                           `json:"description,omitempty"`
+	Type        string                            `json:"type,omitempty"`
+	Description string                            `json:"description,omitempty"`
 	Properties  map[string]*GeminiParameterSchema `json:"properties,omitempty"`
-	Items       *GeminiParameterSchema           `json:"items,omitempty"`
-	Required    []string                         `json:"required,omitempty"`
-	Enum        []string                         `json:"enum,omitempty"`
+	Items       *GeminiParameterSchema            `json:"items,omitempty"`
+	Required    []string                          `json:"required,omitempty"`
+	Enum        []string                          `json:"enum,omitempty"`
 }
 
 // FunctionCall represents a tool call emitted by the model.
