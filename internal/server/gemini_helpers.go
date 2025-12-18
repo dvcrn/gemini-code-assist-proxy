@@ -28,10 +28,22 @@ func normalizeModelName(model string) string {
 	lowerModel := strings.ToLower(model)
 	if strings.Contains(lowerModel, "lite") {
 		return "gemini-2.5-flash-lite"
-	} else if strings.Contains(lowerModel, "flash") {
+	} else if strings.Contains(lowerModel, "3-flash-preview") {
+		return "gemini-3-flash-preview"
+	} else if strings.Contains(lowerModel, "3-pro-preview") {
+		return "gemini-3-pro-preview"
+	} else if strings.Contains(lowerModel, "3-flash") {
+		return "gemini-3-flash"
+	} else if strings.Contains(lowerModel, "3-pro") {
+		return "gemini-3-pro"
+	} else if strings.Contains(lowerModel, "2.5-flash") {
 		return "gemini-2.5-flash"
-	} else if strings.Contains(lowerModel, "pro") {
+	} else if strings.Contains(lowerModel, "2.5-pro") {
 		return "gemini-2.5-pro"
+	} else if strings.Contains(lowerModel, "flash") {
+		return "gemini-3-flash"
+	} else if strings.Contains(lowerModel, "pro") {
+		return "gemini-3-pro"
 	}
 	return model
 }

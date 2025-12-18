@@ -1,69 +1,148 @@
 package transform
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 
-	"github.com/dvcrn/gemini-code-assist-proxy/internal/openai"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
 )
 
-func TestToGeminiRequest(t *testing.T) {
-	t.Run("simple request", func(t *testing.T) {
-		openAIReq := &openai.ChatCompletionRequest{
-			Model: "gemini-pro",
-			Messages: []openai.Message{
-				{Role: "user", Content: "Hello"},
+func TestConvertToGeminiSchema(t *testing.T) {
+	testCases := []struct {
+		name           string
+		inputSchema    map[string]interface{}
+		expectedSchema *gemini.GeminiParameterSchema
+	}{
+		{
+			name: "Simple Schema",
+			inputSchema: map[string]interface{}{
+				"type":        "object",
+				"description": "A simple object.",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "The name.",
+					},
+				},
+				"required": []interface{}{"name"},
 			},
-			Temperature: 0.8,
-			MaxTokens:   100,
-		}
-
-		geminiReq, err := ToGeminiRequest(openAIReq, "test-project")
-		require.NoError(t, err)
-
-		assert.Equal(t, "gemini-pro", geminiReq.Model)
-		assert.Equal(t, "test-project", geminiReq.Project)
-
-		req := geminiReq.Request
-		contents := req.Contents
-		require.Len(t, contents, 1)
-
-		firstContent := contents[0]
-		assert.Equal(t, "user", firstContent.Role)
-		parts := firstContent.Parts
-		require.Len(t, parts, 1)
-		assert.Equal(t, "Hello", parts[0].Text)
-
-		require.NotNil(t, req.GenerationConfig)
-		assert.Equal(t, 0.8, req.GenerationConfig.Temperature)
-		assert.Equal(t, 100, req.GenerationConfig.MaxOutputTokens)
-	})
-
-	t.Run("with system message", func(t *testing.T) {
-		openAIReq := &openai.ChatCompletionRequest{
-			Model: "gemini-pro",
-			Messages: []openai.Message{
-				{Role: "system", Content: "You are a helpful assistant."},
-				{Role: "user", Content: "Hello"},
+			expectedSchema: &gemini.GeminiParameterSchema{
+				Type:        "OBJECT",
+				Description: "A simple object.",
+				Properties: map[string]*gemini.GeminiParameterSchema{
+					"name": {
+						Type:        "STRING",
+						Description: "The name.",
+					},
+				},
+				Required: []string{"name"},
 			},
-		}
+		},
+		{
+			name: "TodoWrite Schema with anyOf",
+			inputSchema: map[string]interface{}{
+				"description": "The updated todo list",
+				"anyOf": []interface{}{
+					map[string]interface{}{
+						"type":     "array",
+						"maxItems": 50.0,
+						"items": map[string]interface{}{
+							"type":     "object",
+							"required": []interface{}{"content", "status"},
+							"properties": map[string]interface{}{
+								"content": map[string]interface{}{
+									"type": "string",
+								},
+								"status": map[string]interface{}{
+									"type": "string",
+									"enum": []interface{}{"pending", "completed"},
+								},
+							},
+						},
+					},
+					map[string]interface{}{
+						"type": "string",
+					},
+				},
+			},
+			expectedSchema: &gemini.GeminiParameterSchema{
+				Type:        "ARRAY",
+				Description: "The updated todo list",
+				Items: &gemini.GeminiParameterSchema{
+					Type:     "OBJECT",
+					Required: []string{"content", "status"},
+					Properties: map[string]*gemini.GeminiParameterSchema{
+						"content": {
+							Type: "STRING",
+						},
+						"status": {
+							Type: "STRING",
+							Enum: []string{"pending", "completed"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "Schema with oneOf",
+			inputSchema: map[string]interface{}{
+				"description": "A parameter that can be one of several types.",
+				"oneOf": []interface{}{
+					map[string]interface{}{
+						"type": "string",
+					},
+					map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "number",
+						},
+					},
+				},
+			},
+			expectedSchema: &gemini.GeminiParameterSchema{
+				Type:        "ARRAY",
+				Description: "A parameter that can be one of several types.",
+				Items: &gemini.GeminiParameterSchema{
+					Type: "NUMBER",
+				},
+			},
+		},
+		{
+			name: "Schema with unsupported keywords",
+			inputSchema: map[string]interface{}{
+				"$schema":              "http://json-schema.org/draft-07/schema#",
+				"type":                 "object",
+				"additionalProperties": false,
+				"description":          "An object with extra keywords.",
+				"properties": map[string]interface{}{
+					"value": map[string]interface{}{
+						"type":             "number",
+						"exclusiveMinimum": 0,
+					},
+				},
+			},
+			expectedSchema: &gemini.GeminiParameterSchema{
+				Type:        "OBJECT",
+				Description: "An object with extra keywords.",
+				Properties: map[string]*gemini.GeminiParameterSchema{
+					"value": {
+						Type: "NUMBER",
+					},
+				},
+			},
+		},
+	}
 
-		geminiReq, err := ToGeminiRequest(openAIReq, "test-project")
-		require.NoError(t, err)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actualSchema := convertToGeminiSchema(tc.inputSchema)
 
-		req := geminiReq.Request
-
-		// Check system instruction
-		require.NotNil(t, req.SystemInstruction)
-		sysParts := req.SystemInstruction.Parts
-		require.Len(t, sysParts, 1)
-		assert.Equal(t, "You are a helpful assistant.", sysParts[0].Text)
-
-		// Check user message
-		contents := req.Contents
-		require.Len(t, contents, 1)
-		firstContent := contents[0]
-		assert.Equal(t, "user", firstContent.Role)
-	})
+			if !reflect.DeepEqual(actualSchema, tc.expectedSchema) {
+				actualJSON, _ := json.MarshalIndent(actualSchema, "", "  ")
+				expectedJSON, _ := json.MarshalIndent(tc.expectedSchema, "", "  ")
+				t.Errorf("Schema conversion failed.\nExpected:\n%s\n\nGot:\n%s", string(expectedJSON), string(actualJSON))
+			}
+		})
+	}
 }

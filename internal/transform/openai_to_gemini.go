@@ -260,15 +260,15 @@ func convertToolsToGeminiTools(tools []openai.Tool) []gemini.Tool {
 		}
 
 		// For specific tools, log the before and after transformation for debugging
-		if t.Function.Name == "Read" || t.Function.Name == "Edit" || t.Function.Name == "MultiEdit" {
-			originalJSON, _ := json.Marshal(t.Function)
-			convertedJSON, _ := json.Marshal(convertedFn)
-			logger.Get().Info().
-				Str("tool_name", t.Function.Name).
-				RawJSON("original_schema", originalJSON).
-				RawJSON("converted_schema", convertedJSON).
-				Msg("Dumping tool schema conversion from OpenAI to Gemini")
-		}
+		// if t.Function.Name == "TodoWrite" {
+		// 	originalJSON, _ := json.Marshal(t.Function)
+		// 	convertedJSON, _ := json.Marshal(convertedFn)
+		// 	logger.Get().Info().
+		// 		Str("tool_name", t.Function.Name).
+		// 		RawJSON("original_schema", originalJSON).
+		// 		RawJSON("converted_schema", convertedJSON).
+		// 		Msg("Dumping tool schema conversion from OpenAI to Gemini")
+		// }
 
 		fns = append(fns, convertedFn)
 	}
@@ -289,8 +289,30 @@ func convertToGeminiSchema(input map[string]interface{}) *gemini.GeminiParameter
 		return nil
 	}
 
-	output := &gemini.GeminiParameterSchema{}
+	// Handle complex schemas with anyOf or oneOf by prioritizing the array definition.
+	var subSchemas []interface{}
+	if anyOf, ok := input["anyOf"].([]interface{}); ok {
+		subSchemas = anyOf
+	} else if oneOf, ok := input["oneOf"].([]interface{}); ok {
+		subSchemas = oneOf
+	}
 
+	if subSchemas != nil {
+		for _, subSchema := range subSchemas {
+			if subSchemaMap, ok := subSchema.(map[string]interface{}); ok {
+				if subSchemaMap["type"] == "array" {
+					// Found the preferred array schema, convert it.
+					// We also merge the description from the parent level.
+					if parentDesc, ok := input["description"].(string); ok {
+						subSchemaMap["description"] = parentDesc
+					}
+					return convertToGeminiSchema(subSchemaMap)
+				}
+			}
+		}
+	}
+
+	output := &gemini.GeminiParameterSchema{}
 	if t, ok := input["type"].(string); ok {
 		output.Type = strings.ToUpper(t)
 	}

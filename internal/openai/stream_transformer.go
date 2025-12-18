@@ -129,7 +129,7 @@ func CreateOpenAIStreamTransformer(model string) func(<-chan StreamChunk) <-chan
 
 			// Process each chunk
 			for chunk := range input {
-				logger.Get().Debug().Interface("chunk", chunk).Msg("Processing Gemini stream chunk")
+				logger.Get().Info().Interface("chunk", chunk).Msg("Processing Gemini stream chunk")
 
 				delta := OpenAIDelta{}
 				shouldSend := false
@@ -226,7 +226,7 @@ func CreateOpenAIStreamTransformer(model string) func(<-chan StreamChunk) <-chan
 
 					if jsonBytes, err := json.Marshal(openAIChunk); err == nil {
 						sse := fmt.Sprintf("data: %s\n\n", string(jsonBytes))
-						logger.Get().Debug().Str("sse", sse).Msg("Sending OpenAI SSE chunk")
+						logger.Get().Info().Str("sse", sse).Msg("Sending OpenAI SSE chunk")
 						output <- sse
 					}
 				}
