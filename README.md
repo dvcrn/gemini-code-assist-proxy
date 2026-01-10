@@ -1,19 +1,31 @@
 # Gemini Code Assist Proxy
 
-Transparently proxy to expose the Gemini Code Assist API through standard APIs that you can plug into different tools
+Transparently proxy to expose the Gemini Code Assist API through standard APIs that you can plug into different tools such as OpenCode or Xcode
 
-This proxy supports Code Assist through:
+```text
+  ┌───────────────┐          ┌───────────────────┐          ┌───────────────────────┐
+  │ External Tool │          │       Proxy       │          │ Google Cloud Endpoint │
+  │ (OpenCode/etc)│          │ (Local or Worker) │          │  (Gemini Code Assist) │
+  └───────┬───────┘          └─────────┬─────────┘          └───────────┬───────────┘
+          │                            │                                │
+          │  Standard API Request      │    Internal API Request        │
+          │ ─────────────────────────▶ │ ─────────────────────────────▶ │
+          │ (Gemini or OpenAI format)  │ (Wrapped + OAuth credentials)  │
+          │                            │                                │
+          │                            │                                │
+          │  Standard API Response     │    Internal API Response       │
+          │ ◀───────────────────────── │ ◀───────────────────────────── │
+          │ (Unwrapped + SSE Stream)   │ (JSON or Internal Stream)      │
+          │                            │                                │
+          ▼                            ▼                                ▼
+```
+
+This proxy exposes Gemini Code Assist through:
 
 - `/v1beta/<model>:streamGenerateContent` for Gemini API compatible clients
 - `/v1/chat/completions` for OpenAI API compatible clients (experimental)
 
 To run locally, or to deploy to Cloudflare Workers
-
-## Prerequisites
-
-- Go 1.19 or later
-- Valid OAuth credentials for Gemini Code Assist API (stored in `~/.gemini/oauth_creds.json`)
-- Google Cloud Project ID with Gemini Code Assist API access
 
 ## Installation
 
@@ -23,28 +35,63 @@ With Go
 go install github.com/dvcrn/gemini-code-assist-proxy/cmd/gemini-code-assist-proxy@latest
 ```
 
-With NPM
-
-coming soon
-
 Then to start:
 
 ```
 ADMIN_API_KEY=123abc gemini-code-assist-proxy
 ```
 
-## Development
+## Auth
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd gemini-proxy
+On first launch, it will attempt to copy your OAuth chain from `~/.gemini/oauth_creds.json` when running locally
 
-# Build the proxy
-just build
+For hosted version, see the docs below
 
-# Or run directly
-just run
+## Usage in other tools
+
+You can use either the native Gemini-supported API at `http://localhost:9878/v1beta`, or the OpenAI transform endpoint at `http://localhost:9878/v1/messages`
+
+Recommended to use the Google / Gemini API when available as it's native to Antigravity
+
+### OpenCode (through Google plugin)
+
+```json
+ "gemini": {
+  "npm": "@ai-sdk/google",
+  "name": "Code Assist",
+  "options": {
+    "baseURL": "http://localhost:9878/v1beta",
+    "apiKey": "xxxx" # whatever you set as ADMIN_API_KEY
+  },
+  "models": {
+    "gemini-3-flash-preview": {
+      "name": "Gemini 3 Flash (Code Assist)"
+    },
+    "gemini-3-pro-preview": {
+      "name": "Gemini 3 Pro (Code Assist)"
+    },
+  }
+},
+```
+
+### OpenCode (through OpenAI)
+
+```json
+ "gemini": {
+  "name": "Code Assist",
+  "options": {
+    "baseURL": "http://localhost:9878/v1",
+    "apiKey": "xxxx" # whatever you set as ADMIN_API_KEY
+  },
+  "models": {
+    "gemini-3-flash-preview": {
+      "name": "Gemini 3 Flash (Code Assist)"
+    },
+    "gemini-3-pro-preview": {
+      "name": "Gemini 3 Pro (Code Assist)"
+    },
+  }
+},
 ```
 
 ## Configuration
