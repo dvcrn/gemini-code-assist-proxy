@@ -49,9 +49,9 @@ For hosted version, see the docs below
 
 ## Usage in other tools
 
-You can use either the native Gemini-supported API at `http://localhost:9878/v1beta`, or the OpenAI transform endpoint at `http://localhost:9878/v1/messages`
+You can use either the native Gemini-supported API at `http://localhost:9877/v1beta`, or the OpenAI transform endpoint at `http://localhost:9877/v1/messages`
 
-Recommended to use the Google / Gemini API when available as it's native to Antigravity
+Recommended to use the Google / Gemini API when available as it's the native format
 
 ### OpenCode (through Google plugin)
 
@@ -60,7 +60,7 @@ Recommended to use the Google / Gemini API when available as it's native to Anti
   "npm": "@ai-sdk/google",
   "name": "Code Assist",
   "options": {
-    "baseURL": "http://localhost:9878/v1beta",
+    "baseURL": "http://localhost:9877/v1beta",
     "apiKey": "xxxx" # whatever you set as ADMIN_API_KEY
   },
   "models": {
@@ -80,7 +80,7 @@ Recommended to use the Google / Gemini API when available as it's native to Anti
  "gemini": {
   "name": "Code Assist",
   "options": {
-    "baseURL": "http://localhost:9878/v1",
+    "baseURL": "http://localhost:9877/v1",
     "apiKey": "xxxx" # whatever you set as ADMIN_API_KEY
   },
   "models": {
@@ -143,7 +143,7 @@ For production deployment on Cloudflare Workers:
 2. **Build for Workers**:
 
    ```bash
-   just build-worker
+   mise run build-worker
    ```
 
 3. **Deploy to Cloudflare**:
