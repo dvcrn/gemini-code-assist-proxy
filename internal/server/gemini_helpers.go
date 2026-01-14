@@ -112,7 +112,6 @@ func TransformSSELine(line string) string {
 
 // sanitizeGeminiRequest: minimal shape fixes for CloudCode.
 // - Force systemInstruction.role = "system"
-// - Strip thinkingConfig entirely (CloudCode doesn't accept it)
 func sanitizeGeminiRequest(r *gemini.GeminiInternalRequest, model string) {
 	if r == nil {
 		return
@@ -125,9 +124,14 @@ func sanitizeGeminiRequest(r *gemini.GeminiInternalRequest, model string) {
 			logger.Get().Debug().Msg("Normalized systemInstruction.role to 'system'")
 		}
 	}
-	// Strip thinkingConfig entirely for CloudCode compatibility
+	// Keep thinkingConfig for newer Gemini models.
+	// Some models require thinking to be configured (or at least not forcibly disabled),
+	// and stripping it can cause "thought" parts to be emitted as regular text.
+	// We only drop it when it is explicitly set to a disabling value.
 	if r.GenerationConfig != nil && r.GenerationConfig.ThinkingConfig != nil {
-		r.GenerationConfig.ThinkingConfig = nil
-		logger.Get().Debug().Msg("Removed thinkingConfig for CloudCode compatibility")
+		if r.GenerationConfig.ThinkingConfig.ThinkingBudget == 0 {
+			r.GenerationConfig.ThinkingConfig = nil
+			logger.Get().Debug().Msg("Removed thinkingConfig with thinkingBudget=0")
+		}
 	}
 }
