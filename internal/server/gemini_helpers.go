@@ -129,9 +129,15 @@ func sanitizeGeminiRequest(r *gemini.GeminiInternalRequest, model string) {
 	// and stripping it can cause "thought" parts to be emitted as regular text.
 	// We only drop it when it is explicitly set to a disabling value.
 	if r.GenerationConfig != nil && r.GenerationConfig.ThinkingConfig != nil {
-		if r.GenerationConfig.ThinkingConfig.ThinkingBudget == 0 {
-			r.GenerationConfig.ThinkingConfig = nil
-			logger.Get().Debug().Msg("Removed thinkingConfig with thinkingBudget=0")
+		cfg := r.GenerationConfig.ThinkingConfig
+		if cfg.ThinkingBudget != nil && *cfg.ThinkingBudget == 0 {
+			if cfg.IncludeThoughts || strings.TrimSpace(cfg.ThinkingLevel) != "" {
+				cfg.ThinkingBudget = nil
+				logger.Get().Debug().Msg("Cleared thinkingBudget=0 to avoid disabling thinking")
+			} else {
+				r.GenerationConfig.ThinkingConfig = nil
+				logger.Get().Debug().Msg("Removed thinkingConfig with thinkingBudget=0")
+			}
 		}
 	}
 }
