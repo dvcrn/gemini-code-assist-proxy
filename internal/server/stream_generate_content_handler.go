@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dvcrn/gemini-code-assist-proxy/internal/gemini"
@@ -248,7 +249,6 @@ func (s *Server) handleStreamGenerateContent(w http.ResponseWriter, r *http.Requ
 		}
 		if b, mErr := json.Marshal(errPayload); mErr == nil {
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", string(b))
-			_, _ = io.WriteString(w, "data: [DONE]\n\n")
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
@@ -282,6 +282,18 @@ streamLoop:
 
 			// Transform CloudCode SSE line into standard Gemini format
 			transformed := TransformSSELine(line)
+
+			// CloudCode-style streams can send a literal [DONE] token.
+			// Standard Gemini streaming responses do not include this marker, and
+			// some clients will attempt to parse it as JSON.
+			trimmed := strings.TrimSpace(transformed)
+			if strings.HasPrefix(trimmed, "data:") {
+				data := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+				if data == "[DONE]" || data == "\"[DONE]\"" {
+					logger.Get().Info().Msg("Upstream sent [DONE], ending stream")
+					break streamLoop
+				}
+			}
 
 			// Write transformed line and a newline; upstream blank lines will pass through too
 			if _, err := fmt.Fprintf(w, "%s\n", transformed); err != nil {
