@@ -1,6 +1,6 @@
 {
   "name": "@dvcrn/gemini-code-assist-proxy",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Release package for gemini-code-assist-proxy",
   "scripts": {
     "postinstall": "node postinstall.js"
