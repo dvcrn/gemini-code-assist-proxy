@@ -29,7 +29,13 @@ To run locally, or to deploy to Cloudflare Workers
 
 ## Installation
 
-With Go
+Option 1 (recommended): prebuilt binary via npm (macOS, Linux, Windows)
+
+```bash
+npm install -g @dvcrn/gemini-code-assist-proxy
+```
+
+Option 2: install from source with Go
 
 ```
 go install github.com/dvcrn/gemini-code-assist-proxy/cmd/gemini-code-assist-proxy@latest

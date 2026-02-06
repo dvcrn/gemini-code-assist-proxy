@@ -1,0 +1,55 @@
+version: 2
+
+project_name: gemini-code-assist-proxy
+
+builds:
+  - id: gemini-code-assist-proxy
+    main: ./cmd/gemini-code-assist-proxy
+    binary: gemini-code-assist-proxy
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - 7
+    ignore:
+      - goos: windows
+        goarch: arm
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -s -w -buildid=
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    wrap_in_directory: false
+    files: []
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: dvcrn
+    name: gemini-code-assist-proxy
+  replace_existing_artifacts: true
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+

@@ -1,6 +1,6 @@
 module github.com/dvcrn/gemini-code-assist-proxy
 
-go 1.24.4
+go 1.25.7
 
 tool (
 	golang.org/x/tools/cmd/goimports
