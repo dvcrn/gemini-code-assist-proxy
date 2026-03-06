@@ -141,12 +141,12 @@ func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			Vendor:              defaultVendor,
 		},
 		{
-			ID:      "gemini-3-pro-preview",
+			ID:      "gemini-3.1-pro-preview",
 			Object:  defaultModelObject,
-			Name:    "Gemini 3 Pro Preview",
-			Version: "3.0.0",
+			Name:    "Gemini 3.1 Pro Preview",
+			Version: "3.1.0",
 			Capabilities: ModelCapabilities{
-				Family: "gemini-3-pro",
+				Family: "gemini-3.1-pro",
 				Limits: ModelLimits{
 					MaxContextWindowTokens: 32768,
 					MaxOutputTokens:        8192,

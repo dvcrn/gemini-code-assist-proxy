@@ -30,8 +30,8 @@ func normalizeModelName(model string) string {
 		return "gemini-2.5-flash-lite"
 	} else if strings.Contains(lowerModel, "3-flash-preview") {
 		return "gemini-3-flash-preview"
-	} else if strings.Contains(lowerModel, "3-pro-preview") {
-		return "gemini-3-pro-preview"
+	} else if strings.Contains(lowerModel, "3.1-pro-preview") || strings.Contains(lowerModel, "3-pro-preview") {
+		return "gemini-3.1-pro-preview"
 	} else if strings.Contains(lowerModel, "3-flash") {
 		return "gemini-3-flash"
 	} else if strings.Contains(lowerModel, "3-pro") {

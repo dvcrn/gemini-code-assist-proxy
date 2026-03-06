@@ -73,8 +73,8 @@ Recommended to use the Google / Gemini API when available as it's the native for
     "gemini-3-flash-preview": {
       "name": "Gemini 3 Flash (Code Assist)"
     },
-    "gemini-3-pro-preview": {
-      "name": "Gemini 3 Pro (Code Assist)"
+    "gemini-3.1-pro-preview": {
+      "name": "Gemini 3.1 Pro (Code Assist)"
     },
   }
 },
@@ -93,8 +93,8 @@ Recommended to use the Google / Gemini API when available as it's the native for
     "gemini-3-flash-preview": {
       "name": "Gemini 3 Flash (Code Assist)"
     },
-    "gemini-3-pro-preview": {
-      "name": "Gemini 3 Pro (Code Assist)"
+    "gemini-3.1-pro-preview": {
+      "name": "Gemini 3.1 Pro (Code Assist)"
     },
   }
 },

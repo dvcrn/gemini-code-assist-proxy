@@ -9,9 +9,14 @@ func TestNormalizeModelName(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "gemini-3-pro-preview",
+			name:     "gemini-3.1-pro-preview",
+			input:    "gemini-3.1-pro-preview",
+			expected: "gemini-3.1-pro-preview",
+		},
+		{
+			name:     "legacy gemini-3-pro-preview alias",
 			input:    "gemini-3-pro-preview",
-			expected: "gemini-3-pro-preview",
+			expected: "gemini-3.1-pro-preview",
 		},
 		{
 			name:     "gemini-3-pro",
@@ -24,7 +29,6 @@ func TestNormalizeModelName(t *testing.T) {
 			expected: "gemini-3-pro",
 		},
 		{
-			name:     "gemini-3-flash-preview",
 			input:    "gemini-3-flash-preview",
 			expected: "gemini-3-flash-preview",
 		},
@@ -40,8 +44,13 @@ func TestNormalizeModelName(t *testing.T) {
 		},
 		{
 			name:     "alias with slash",
+			input:    "models/gemini-3.1-pro-preview",
+			expected: "gemini-3.1-pro-preview",
+		},
+		{
+			name:     "legacy alias with slash",
 			input:    "models/gemini-3-pro-preview",
-			expected: "gemini-3-pro-preview",
+			expected: "gemini-3.1-pro-preview",
 		},
 		{
 			name:     "gemini-2.5-pro",
